@@ -60,7 +60,6 @@ class Waveunet(nn.Module):
 
             out_channels = self.W + (self.W * layer)
             in_channels  = 1 if layer == 0 else out_channels - self.W
-
             self.enc_conv.append(nn.Conv1d(
                 in_channels=in_channels,
                 out_channels=out_channels,
@@ -82,8 +81,6 @@ class Waveunet(nn.Module):
 
             in_channels = self.dec_num_filt[-layer-1]
             out_channels = in_channels - self.W
-            print(in_channels)
-            print(out_channels)
             self.dec_conv.append(nn.ConvTranspose1d(
                 in_channels=in_channels,
                 out_channels=out_channels,
@@ -101,8 +98,6 @@ class Waveunet(nn.Module):
 
         inputs = x
 
-        print("input: "+str(inputs.size()))
-
         # Encoding Path
         for layer in range(self.num_layers):
 
@@ -112,13 +107,10 @@ class Waveunet(nn.Module):
             #x = self.bn1(x)
 
             # Save skip connection for decoding path and downsample
-            print("enc pre-ds: "+str(x.size()))
             x = self.ds(x)
             self.skip.append(x)
-            print("enc post-ds: "+str(x.size()))
 
         x = self.conv_bottleneck(x)
-        print("bottleneck: "+str(x.size()))
 
         # Decoding Path
         for layer in range(self.num_layers):
@@ -129,14 +121,9 @@ class Waveunet(nn.Module):
             num_filter = skip_layer.size()[2]
 
             # Upsample and Concatenate
-            print("dec pre-us X: "+str(x.size()))
-            print("dec pre-us Skip: "+str(skip_layer.size()))
-            print(self.dec_conv[layer])
-            #x = self.us(x)
             x = torch.cat((x, skip_layer),2)
-            print("dec post cat X: "+str(x.size()))
             x = self.dec_conv[layer](x)
-            print("dec post-us X: "+str(x.size()))
-            print("dec post cat: "+str(x.size()))
-            x = self.leaky(x)
+            y = self.leaky(x)
             #x = self.bn1(x)
+
+        return y
