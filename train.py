@@ -11,7 +11,7 @@ import _pickle as pickle
 from torch.utils.data import TensorDataset, DataLoader
 import torchaudio
 
-device='cuda:3'
+device='cuda:7'
 
 import librosa
 import librosa.display
@@ -94,12 +94,12 @@ for epoch in range(maxEpoch):
         err.backward()
         optimizer.step()                                    
         
-        if p%20 == 0 and p is not 0:
-            with torch.no_grad():
-                valSNR=FCN_AE_test(model, vPaths, scale, zeropadding, quantization=False, writeout=False)
-            if valSNR > maxValSNR:
-                maxValSNR = valSNR
-                torch.save(model.state_dict(), 'FCN_AE_Music_LV{}.model'.format(Hc)) 
-            toc=time.time()
-            logging.info('ep: {0}\t err: {1:3.4}\t SNR: {2:3.4}\t max SNR: {3:3.4}\t time: {4:3.3}'.format(epoch, err.detach().cpu(), valSNR, maxValSNR, toc-tic))    
-            tic=time.time()
+        # if p%20 == 0 and p is not 0:
+        #     with torch.no_grad():
+        #         valSNR=FCN_AE_test(model, vPaths, scale, zeropadding, quantization=False, writeout=False)
+        #     if valSNR > maxValSNR:
+        #         maxValSNR = valSNR
+        #         torch.save(model.state_dict(), 'FCN_AE_Music_LV{}.model'.format(Hc)) 
+        #     toc=time.time()
+        #     logging.info('ep: {0}\t err: {1:3.4}\t SNR: {2:3.4}\t max SNR: {3:3.4}\t time: {4:3.3}'.format(epoch, err.detach().cpu(), valSNR, maxValSNR, toc-tic))    
+        #     tic=time.time()
