@@ -41,7 +41,7 @@ parser.add_argument('--dataset', type=str, default="musdb",
                     ],
                     help='Name of the dataset.')
 parser.add_argument('--root', type=str, help='root path of dataset')
-parser.add_argument('--output', type=str, default="open-unmix",
+parser.add_argument('--output', type=str, default="waveunet",
                     help='provide output path base folder name')
 parser.add_argument('--model', type=str, help='Path to checkpoint folder')
 
@@ -116,16 +116,16 @@ zeropadding=1024+7040
 random.shuffle(trPaths)
 tic=time.time()
 
-def train(args, m, device, train_sampler, optimizer):
+def train(args, waveunet, device, train_sampler, optimizer):
     losses = utils.AverageMeter()
-    unmix.train()
+    waveunet.train()
     pbar = tqdm.tqdm(train_sampler, disable=args.quiet)
     for x, y in pbar:
         pbar.set_description("Training batch")
         x, y = x.to(device), y.to(device)
         optimizer.zero_grad()
-        Y_hat = unmix(x)
-        Y = unmix.transform(y)
+        Y_hat = waveunet(x)
+        Y = waveunet.transform(y)
         loss = torch.nn.functional.mse_loss(Y_hat, Y)
         loss.backward()
         optimizer.step()
@@ -150,10 +150,10 @@ train_dataset, valid_dataset, args = data.load_datasets(parser, args)
 target_path = Path("./output")
 target_path.mkdir(parents=True, exist_ok=True)
 
-# train_sampler = torch.utils.data.DataLoader(
-#     train_dataset, batch_size=BS, shuffle=True,
-#     **dataloader_kwargs
-# )
+train_sampler = torch.utils.data.DataLoader(
+    train_dataset, batch_size=BS, shuffle=True,
+    **dataloader_kwargs
+)
 # valid_sampler = torch.utils.data.DataLoader(
 #     valid_dataset, batch_size=1,
 #     **dataloader_kwargs
@@ -163,7 +163,7 @@ target_path.mkdir(parents=True, exist_ok=True)
 # #summary(m,(1,16384),device='cpu')
 
 # optimizer = torch.optim.Adam(
-#     unmix.parameters(),
+#     waveunet.parameters(),
 #     lr=args.lr,
 #     weight_decay=args.weight_decay
 # )
