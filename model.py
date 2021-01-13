@@ -31,7 +31,7 @@ class Waveunet(nn.Module):
     def __init__(self,
         W = 24,
         H = 16384,
-        Ch = 1,
+        Ch = 2,
         num_layers = 12,
         filter_size = 15,
         kernel_size_down = 15,
@@ -49,6 +49,7 @@ class Waveunet(nn.Module):
         self.skip         = []
         self.dec_num_filt = []
         self.W            = W
+        self.channel      = Ch
 
         self.leaky = nn.LeakyReLU(negative_slope=0.2)
         #self.bn1   = BatchNorm1d()
@@ -59,7 +60,7 @@ class Waveunet(nn.Module):
         for layer in range(num_layers):
 
             out_channels = self.W + (self.W * layer)
-            in_channels  = 1 if layer == 0 else out_channels - self.W
+            in_channels  = self.channel if layer == 0 else out_channels - self.W
             self.enc_conv.append(nn.Conv1d(
                 in_channels=in_channels,
                 out_channels=out_channels,
@@ -88,7 +89,7 @@ class Waveunet(nn.Module):
                 padding=(kernel_size_down // 2),
                 stride=stride))
         
-        self.dec_conv.append(nn.Conv1d(in_channels=self.W,out_channels=1,kernel_size=1))
+        self.dec_conv.append(nn.Conv1d(in_channels=self.W,out_channels=self.channel,kernel_size=1))
 
     def forward(self,x):
         """

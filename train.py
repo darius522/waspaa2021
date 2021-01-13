@@ -4,6 +4,7 @@ import torch.nn as nn
 import numpy as np
 import random
 from pathlib import Path
+import tqdm
 
 import torch.nn.functional as F
 from torchvision import datasets, transforms
@@ -26,6 +27,7 @@ import logging
 import argparse
 import model
 import data
+import utils
 
 parser = argparse.ArgumentParser(description='Open Unmix Trainer')
 
@@ -62,7 +64,7 @@ parser.add_argument('--seed', type=int, default=42, metavar='S',
                     help='random seed (default: 42)')
 
 # Model Parameters
-parser.add_argument('--seq-dur', type=float, default=6.0,
+parser.add_argument('--seq-dur', type=float, default=0.37151927,
                     help='Sequence duration in seconds'
                     'value of <=0.0 will use full/variable length')
 parser.add_argument('--unidirectional', action='store_true', default=False,
@@ -88,9 +90,6 @@ parser.add_argument('--no-cuda', action='store_true', default=False,
 
 args, _ = parser.parse_known_args()
 print(args.nb_channels)
-
-device = torch.device("cuda")
-
 
 rootPath='../../../media/sdb1/Data/ETRI_Music/'
 allPaths=[]
@@ -154,87 +153,89 @@ train_sampler = torch.utils.data.DataLoader(
     train_dataset, batch_size=BS, shuffle=True,
     **dataloader_kwargs
 )
-# valid_sampler = torch.utils.data.DataLoader(
-#     valid_dataset, batch_size=1,
-#     **dataloader_kwargs
-# )
 
-# waveunet = model.Waveunet().to(device)
-# #summary(m,(1,16384),device='cpu')
+valid_sampler = torch.utils.data.DataLoader(
+    valid_dataset, batch_size=1,
+    **dataloader_kwargs
+)
 
-# optimizer = torch.optim.Adam(
-#     waveunet.parameters(),
-#     lr=args.lr,
-#     weight_decay=args.weight_decay
-# )
+waveunet = model.Waveunet()
+waveunet.to(device)
+#summary(m,(1,16384),device='cpu')
 
-# scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-#     optimizer,
-#     factor=args.lr_decay_gamma,
-#     patience=args.lr_decay_patience,
-#     cooldown=10
-# )
+optimizer = torch.optim.Adam(
+    waveunet.parameters(),
+    lr=args.lr,
+    weight_decay=args.weight_decay
+)
 
-# es = utils.EarlyStopping(patience=args.patience)
+scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+    optimizer,
+    factor=args.lr_decay_gamma,
+    patience=args.lr_decay_patience,
+    cooldown=10
+)
 
-# t = tqdm.trange(1, args.epochs + 1, disable=args.quiet)
-# train_losses = []
-# valid_losses = []
-# train_times = []
-# best_epoch = 0
+es = utils.EarlyStopping(patience=args.patience)
 
-# for epoch in t:
-#     t.set_description("Training Epoch")
-#     end = time.time()
-#     train_loss = train(args, waveunet, device, train_sampler, optimizer)
-#     valid_loss = valid(args, waveunet, device, valid_sampler)
-#     scheduler.step(valid_loss)
-#     train_losses.append(train_loss)
-#     valid_losses.append(valid_loss)
+t = tqdm.trange(1, args.epochs + 1, disable=args.quiet)
+train_losses = []
+valid_losses = []
+train_times = []
+best_epoch = 0
 
-#     t.set_postfix(
-#         train_loss=train_loss, val_loss=valid_loss
-#     )
+for epoch in t:
+    t.set_description("Training Epoch")
+    end = time.time()
+    train_loss = train(args, waveunet, device, train_sampler, optimizer)
+    valid_loss = valid(args, waveunet, device, valid_sampler)
+    scheduler.step(valid_loss)
+    train_losses.append(train_loss)
+    valid_losses.append(valid_loss)
 
-#     stop = es.step(valid_loss)
+    t.set_postfix(
+        train_loss=train_loss, val_loss=valid_loss
+    )
 
-#     if valid_loss == es.best:
-#         best_epoch = epoch
+    stop = es.step(valid_loss)
 
-#     utils.save_checkpoint({
-#             'epoch': epoch + 1,
-#             'state_dict': waveunet.state_dict(),
-#             'best_loss': es.best,
-#             'optimizer': optimizer.state_dict(),
-#             'scheduler': scheduler.state_dict()
-#         },
-#         is_best=valid_loss == es.best,
-#         path=target_path,
-#         target=args.target
-#     )
+    if valid_loss == es.best:
+        best_epoch = epoch
 
-#     # save params
-#     params = {
-#         'epochs_trained': epoch,
-#         'args': vars(args),
-#         'best_loss': es.best,
-#         'best_epoch': best_epoch,
-#         'train_loss_history': train_losses,
-#         'valid_loss_history': valid_losses,
-#         'train_time_history': train_times,
-#         'num_bad_epochs': es.num_bad_epochs,
-#         'commit': commit
-#     }
+    utils.save_checkpoint({
+            'epoch': epoch + 1,
+            'state_dict': waveunet.state_dict(),
+            'best_loss': es.best,
+            'optimizer': optimizer.state_dict(),
+            'scheduler': scheduler.state_dict()
+        },
+        is_best=valid_loss == es.best,
+        path=target_path,
+        target=args.target
+    )
 
-#     with open(Path(target_path,  args.target + '.json'), 'w') as outfile:
-#         outfile.write(json.dumps(params, indent=4, sort_keys=True))
+    # save params
+    params = {
+        'epochs_trained': epoch,
+        'args': vars(args),
+        'best_loss': es.best,
+        'best_epoch': best_epoch,
+        'train_loss_history': train_losses,
+        'valid_loss_history': valid_losses,
+        'train_time_history': train_times,
+        'num_bad_epochs': es.num_bad_epochs,
+        'commit': commit
+    }
 
-#     train_times.append(time.time() - end)
+    with open(Path(target_path,  args.target + '.json'), 'w') as outfile:
+        outfile.write(json.dumps(params, indent=4, sort_keys=True))
 
-#     if stop:
-#         print("Apply Early Stopping")
-#         break
+    train_times.append(time.time() - end)
+
+    if stop:
+        print("Apply Early Stopping")
+        break
 
 
-# if __name__ == "__main__":
-# main()
+if __name__ == "__main__":
+    main()
