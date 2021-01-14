@@ -132,6 +132,7 @@ def train(args, waveunet, device, train_sampler, optimizer):
     return losses.avg
 
 use_cuda = torch.cuda.is_available()
+device = torch.device("cuda" if use_cuda else "cpu")
 print("Using GPU:", use_cuda)
 dataloader_kwargs = {'num_workers': args.nb_workers, 'pin_memory': True} if use_cuda else {}
 
@@ -140,8 +141,6 @@ repo_dir = os.path.abspath(os.path.dirname(__file__))
 # use jpg or npy
 torch.manual_seed(args.seed)
 random.seed(args.seed)
-
-device = torch.device("cuda" if use_cuda else "cpu")
 
 train_dataset, valid_dataset, args = data.load_datasets(parser, args)
 
