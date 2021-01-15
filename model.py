@@ -44,50 +44,54 @@ class Waveunet(nn.Module):
         super(Waveunet, self).__init__()
 
         self.num_layers   = num_layers
-        self.enc_conv     = []
-        self.dec_conv     = []
+        self.enc_conv     = nn.ModuleList()
+        self.dec_conv     = nn.ModuleList()
         self.skip         = []
         self.dec_num_filt = []
         self.W            = W
         self.channel      = Ch
+        self.kernel_size_down = kernel_size_down
+        self.kernel_size_up   = kernel_size_up
+        self.stride       = stride
 
         self.leaky = nn.LeakyReLU(negative_slope=0.2)
         #self.bn1   = BatchNorm1d()
-        self.us    = Upsample()
         self.ds    = Downsample()
 
         # Encoding Path
         for layer in range(num_layers):
 
-            out_channels = self.W + (self.W * layer)
-            in_channels  = self.channel if layer == 0 else out_channels - self.W
+            self.out_channels = self.W + (self.W * layer)
+            self.in_channels  = self.channel if layer == 0 else self.out_channels - self.W
+
             self.enc_conv.append(nn.Conv1d(
-                in_channels=in_channels,
-                out_channels=out_channels,
-                kernel_size=kernel_size_down,
-                padding=(kernel_size_down // 2),
-                stride=stride))
+                in_channels=self.in_channels,
+                out_channels=self.out_channels,
+                kernel_size=self.kernel_size_down,
+                padding=(self.kernel_size_down // 2),
+                stride=self.stride))
             
-            self.dec_num_filt.append(out_channels)
+            self.dec_num_filt.append(self.out_channels)
 
         self.conv_bottleneck = Conv1d(
-            in_channels=out_channels,
-            out_channels=out_channels,
-            kernel_size=kernel_size_down,
-            padding=(kernel_size_down // 2),
-            stride=stride)
+            in_channels=self.out_channels,
+            out_channels=self.out_channels,
+            kernel_size=self.kernel_size_down,
+            padding=(self.kernel_size_down // 2),
+            stride=self.stride)
 
         # Decoding Path
         for layer in range(num_layers-1):
 
-            in_channels = self.dec_num_filt[-layer-1]
-            out_channels = in_channels - self.W
+            self.in_channels = self.dec_num_filt[-layer-1]
+            self.out_channels = self.in_channels - self.W
+
             self.dec_conv.append(nn.ConvTranspose1d(
-                in_channels=in_channels,
-                out_channels=out_channels,
-                kernel_size=kernel_size_down,
-                padding=(kernel_size_down // 2),
-                stride=stride))
+                in_channels=self.in_channels,
+                out_channels=self.out_channels,
+                kernel_size=self.kernel_size_up,
+                padding=(self.kernel_size_up // 2),
+                stride=self.stride))
         
         self.dec_conv.append(nn.Conv1d(in_channels=self.W,out_channels=self.channel,kernel_size=1))
 

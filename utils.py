@@ -90,10 +90,8 @@ def torchaudio_loader(path, start=0, dur=None):
         return sig
         # otherwise loads a random excerpt
     else:
-        num_frames = int(dur * info['samplerate'])
-        offset = int(start * info['samplerate'])
         sig, rate = torchaudio.load(
-            path, num_frames=num_frames, offset=offset
+            path, num_frames=dur, offset=start
         )
         return sig
 

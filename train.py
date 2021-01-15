@@ -29,10 +29,12 @@ import model
 import data
 import utils
 
-parser = argparse.ArgumentParser(description='Open Unmix Trainer')
+rootPath='../../../media/sdb1/Data/ETRI_Music/'
+
+parser = argparse.ArgumentParser(description='Trainer')
 
 # which target do we want to train?
-parser.add_argument('--target', type=str, default='vocals',
+parser.add_argument('--target', type=str, default='mix',
                     help='target source (will be passed to the dataset)')
 
 # Dataset paramaters
@@ -42,13 +44,13 @@ parser.add_argument('--dataset', type=str, default="musdb",
                         'trackfolder_var', 'trackfolder_fix'
                     ],
                     help='Name of the dataset.')
-parser.add_argument('--root', type=str, help='root path of dataset')
+parser.add_argument('--root', type=str, default=rootPath, help='root path of dataset')
 parser.add_argument('--output', type=str, default="waveunet",
                     help='provide output path base folder name')
 parser.add_argument('--model', type=str, help='Path to checkpoint folder')
 
 # Trainig Parameters
-parser.add_argument('--epochs', type=int, default=1000)
+parser.add_argument('--epochs', type=int, default=300)
 parser.add_argument('--batch-size', type=int, default=16)
 parser.add_argument('--lr', type=float, default=0.001,
                     help='learning rate, defaults to 1e-3')
@@ -64,15 +66,9 @@ parser.add_argument('--seed', type=int, default=42, metavar='S',
                     help='random seed (default: 42)')
 
 # Model Parameters
-parser.add_argument('--seq-dur', type=float, default=0.37151927,
+parser.add_argument('--seq-dur', type=float, default=16834, # 16834 samples
                     help='Sequence duration in seconds'
                     'value of <=0.0 will use full/variable length')
-parser.add_argument('--unidirectional', action='store_true', default=False,
-                    help='Use unidirectional LSTM instead of bidirectional')
-parser.add_argument('--nfft', type=int, default=4096,
-                    help='STFT fft size and window size')
-parser.add_argument('--nhop', type=int, default=1024,
-                    help='STFT hop size')
 parser.add_argument('--hidden-size', type=int, default=512,
                     help='hidden size parameter of dense bottleneck layers')
 parser.add_argument('--bandwidth', type=int, default=16000,
@@ -91,22 +87,16 @@ parser.add_argument('--no-cuda', action='store_true', default=False,
 args, _ = parser.parse_known_args()
 print(args.nb_channels)
 
-rootPath='../../../media/sdb1/Data/ETRI_Music/'
-allPaths=[]
-allPaths+= [os.path.join(rootPath,song) for song in os.listdir(rootPath) if not os.path.isdir(os.path.join(rootPath, song))]
-totLen=len(allPaths)
+
+allPaths  = []
+allPaths += [os.path.join(rootPath,song) for song in os.listdir(rootPath) if not os.path.isdir(os.path.join(rootPath, song))]
+totLen    = len(allPaths)
 random.seed(0)
 
 random.shuffle(allPaths)
-trPaths=allPaths[:np.int(totLen*.9)]
-vPaths=allPaths[np.int(totLen*.9):np.int(totLen*.95)]
-tePaths=allPaths[np.int(totLen*.95):]
-
-H=60
-W2=5
-maxEpoch=300
-BS=20
-minLen=16384
+trPaths = allPaths[:np.int(totLen*.9)]
+vPaths  = allPaths[np.int(totLen*.9):np.int(totLen*.95)]
+tePaths = allPaths[np.int(totLen*.95):]
 
 maxValSNR=-1000
 scale=1e-10
@@ -123,16 +113,15 @@ def train(args, waveunet, device, train_sampler, optimizer):
         pbar.set_description("Training batch")
         x, y = x.to(device), y.to(device)
         optimizer.zero_grad()
-        Y_hat = waveunet(x)
-        Y = waveunet.transform(y)
-        loss = torch.nn.functional.mse_loss(Y_hat, Y)
+        y_hat = waveunet(x)
+        loss = torch.nn.functional.mse_loss(y_hat, y)
         loss.backward()
         optimizer.step()
-        losses.update(loss.item(), Y.size(1))
+        losses.update(loss.item(), y.size(1))
     return losses.avg
 
 use_cuda = torch.cuda.is_available()
-device = torch.device("cuda" if use_cuda else "cpu")
+device = torch.device("cuda:7" if use_cuda else "cpu")
 print("Using GPU:", use_cuda)
 dataloader_kwargs = {'num_workers': args.nb_workers, 'pin_memory': True} if use_cuda else {}
 
@@ -142,14 +131,14 @@ repo_dir = os.path.abspath(os.path.dirname(__file__))
 torch.manual_seed(args.seed)
 random.seed(args.seed)
 
-train_dataset, valid_dataset, args = data.load_datasets(parser, args)
+train_dataset, valid_dataset, args = data.load_datasets(parser, args, train=trPaths, valid=vPaths)
 
 # create output dir if not exist
 target_path = Path("./output")
 target_path.mkdir(parents=True, exist_ok=True)
 
 train_sampler = torch.utils.data.DataLoader(
-    train_dataset, batch_size=BS, shuffle=True,
+    train_dataset, batch_size=args.batch_size, shuffle=True,
     **dataloader_kwargs
 )
 
@@ -158,7 +147,7 @@ valid_sampler = torch.utils.data.DataLoader(
     **dataloader_kwargs
 )
 
-waveunet = model.Waveunet()
+waveunet = model.Waveunet().cuda()
 waveunet.to(device)
 #summary(m,(1,16384),device='cpu')
 
