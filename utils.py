@@ -8,7 +8,7 @@ def dataset_items_to_csv(path, items):
     with open(path, 'w') as f: 
         write = csv.writer(f) 
         for i in items:
-            write.writerow(i) 
+            write.writerow([i]) 
 
 def _sndfile_available():
     try:

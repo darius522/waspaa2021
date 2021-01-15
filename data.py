@@ -43,7 +43,7 @@ def load_datasets(parser, args, train=None, valid=None):
 
     dataset_kwargs = {
         'root': args.root,
-        'seq_duration': args.seq_dur,
+        'seq_duration': args.seq_dur
     }
 
     train_dataset = Dataset(
@@ -96,6 +96,7 @@ class Dataset(torch.utils.data.Dataset):
             start = 0
 
         audio = load_audio(path, start=start, dur=self.seq_duration)
+
         # return torch tensors
         return audio, audio
 

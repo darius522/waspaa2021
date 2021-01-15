@@ -25,7 +25,7 @@ import soundfile as sf
 import logging
 
 import argparse
-import model
+import models
 import data
 import utils
 
@@ -35,16 +35,17 @@ experiment_id = np.random.randint(0,1000000)
 parser = argparse.ArgumentParser(description='Trainer')
 
 parser.add_argument('--experiment-id', type=str, default=str(experiment_id))
+parser.add_argument('--model', type=str, default="unet")
 
 # Dataset paramaters
 parser.add_argument('--root', type=str, default=rootPath, help='root path of dataset')
 parser.add_argument('--output', type=str, default="output",
                     help='provide output path base folder name')
-parser.add_argument('--model', type=str, help='Path to checkpoint folder')
 
 # Trainig Parameters
 parser.add_argument('--epochs', type=int, default=300)
-parser.add_argument('--batch-size', type=int, default=16)
+parser.add_argument('--num-its', type=int, default=1000)
+parser.add_argument('--batch-size', type=int, default=32)
 parser.add_argument('--lr', type=float, default=0.001,
                     help='learning rate, defaults to 1e-3')
 parser.add_argument('--patience', type=int, default=140,
@@ -59,9 +60,11 @@ parser.add_argument('--seed', type=int, default=42, metavar='S',
                     help='random seed (default: 42)')
 
 # Model Parameters
-parser.add_argument('--seq-dur', type=float, default=16384, # 16384 samples
+parser.add_argument('--seq-dur', type=float, default=350912,
                     help='Sequence duration in seconds'
                     'value of <=0.0 will use full/variable length')
+parser.add_argument('--zero-pad', type=float, default=1024+7040, 
+                    help='Optional zero-padding to be added to batch')
 parser.add_argument('--hidden-size', type=int, default=512,
                     help='hidden size parameter of dense bottleneck layers')
 parser.add_argument('--bandwidth', type=int, default=16000,
@@ -90,24 +93,30 @@ trPaths = allPaths[:np.int(totLen*.9)]
 vPaths  = allPaths[np.int(totLen*.9):np.int(totLen*.95)]
 tePaths = allPaths[np.int(totLen*.95):]
 
-utils.dataset_items_to_csv(path=os.path.join(args.output,'testset_'+args.experiment_id+'.csv'),items=tePaths)
-
 random.shuffle(trPaths)
 tic=time.time()
 
-def train(args, waveunet, device, train_sampler, optimizer):
+def train(args, model, device, train_sampler, optimizer):
     losses = utils.AverageMeter()
-    waveunet.train()
-    pbar = tqdm.tqdm(train_sampler, disable=args.quiet)
-    for x, y in pbar:
-        pbar.set_description("Training batch")
-        x, y = x.to(device), y.to(device)
-        optimizer.zero_grad()
-        y_hat = waveunet(x)
-        loss = torch.nn.functional.mse_loss(y_hat, y)
-        loss.backward()
-        optimizer.step()
-        losses.update(loss.item(), y.size(1))
+    model.train()
+    i_bar = tqdm.tqdm(range(args.num_its), disable=args.quiet)
+    b_bar = tqdm.tqdm(train_sampler, disable=args.quiet)
+
+    for _ in i_bar:
+        i_bar.set_description("Training Iteration")
+        for x, y in b_bar:
+            b_bar.set_description("Training Batch")
+            x, y = x.to(device), y.to(device)
+            optimizer.zero_grad()
+            if args.model == 'unet':
+                y_hat = model(torch.cat((torch.randn((args.batch_size, 2, args.zero_pad), device=device)*1e-10, x), 2))
+            else:
+                y_hat = model(x)
+            loss = torch.nn.functional.mse_loss(y_hat, y)
+            loss.backward()
+            optimizer.step()
+            losses.update(loss.item(), y.size(1))
+            torch.cuda.empty_cache()
     return losses.avg
 
 use_cuda = torch.cuda.is_available()
@@ -124,25 +133,30 @@ random.seed(args.seed)
 train_dataset, valid_dataset, args = data.load_datasets(parser, args, train=trPaths, valid=vPaths)
 
 # create output dir if not exist
-target_path = Path(args.output)
+target_path = Path(os.path.join(args.output,args.model))
 target_path.mkdir(parents=True, exist_ok=True)
 
+utils.dataset_items_to_csv(path=os.path.join(args.output,args.model+'/'+'testset_'+args.model+args.experiment_id+'.csv'),items=tePaths)
+
 train_sampler = torch.utils.data.DataLoader(
-    train_dataset, batch_size=args.batch_size, shuffle=True,
+    train_dataset, batch_size=args.batch_size, shuffle=True, drop_last=True,
     **dataloader_kwargs
 )
 
 valid_sampler = torch.utils.data.DataLoader(
-    valid_dataset, batch_size=1,
+    valid_dataset, batch_size=1, drop_last=True,
     **dataloader_kwargs
 )
 
-waveunet = model.Waveunet()
-waveunet.to(device)
-#summary(waveunet,(2,args.seq_dur),device='cpu')
+if args.model == 'waveunet':
+    model = models.Waveunet().to(device)
+elif args.model == 'unet':
+    args.seq_dur = 350912
+    model = models.U_Net(H=60, Hc=4, Hskip=4, W1=32, W2=5).to(device)
+#summary(model,(2,args.seq_dur),device='cpu')
 
 optimizer = torch.optim.Adam(
-    waveunet.parameters(),
+    model.parameters(),
     lr=args.lr,
     weight_decay=args.weight_decay
 )
@@ -165,8 +179,8 @@ best_epoch = 0
 for epoch in t:
     t.set_description("Training Epoch")
     end = time.time()
-    train_loss = train(args, waveunet, device, train_sampler, optimizer)
-    valid_loss = valid(args, waveunet, device, valid_sampler)
+    train_loss = train(args, model, device, train_sampler, optimizer)
+    valid_loss = valid(args, model, device, valid_sampler)
     scheduler.step(valid_loss)
     train_losses.append(train_loss)
     valid_losses.append(valid_loss)
@@ -182,7 +196,7 @@ for epoch in t:
 
     utils.save_checkpoint({
             'epoch': epoch + 1,
-            'state_dict': waveunet.state_dict(),
+            'state_dict': model.state_dict(),
             'best_loss': es.best,
             'optimizer': optimizer.state_dict(),
             'scheduler': scheduler.state_dict()
