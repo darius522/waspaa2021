@@ -109,8 +109,8 @@ class Dataset(torch.utils.data.Dataset):
         for path in tqdm.tqdm(self.paths):
             if path and self.seq_duration is not None:
                 info = load_info(path)
-                duration = info['duration']
-                if info['duration'] > self.seq_duration:
+                duration = info['samples']
+                if info['samples'] > self.seq_duration:
                     yield path
             else:
                 yield path

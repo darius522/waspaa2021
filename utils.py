@@ -2,7 +2,13 @@ import shutil
 import torch
 import os
 import numpy as np
+import csv
 
+def dataset_items_to_csv(path, items):
+    with open(path, 'w') as f: 
+        write = csv.writer(f) 
+        for i in items:
+            write.writerow(i) 
 
 def _sndfile_available():
     try:
@@ -51,12 +57,10 @@ def soundfile_info(path):
 def soundfile_loader(path, start=0, dur=None):
     import soundfile
     # get metadata
-    info = soundfile_info(path)
-    start = int(start * info['samplerate'])
     # check if dur is none
     if dur:
         # stop in soundfile is calc in samples, not seconds
-        stop = start + int(dur * info['samplerate'])
+        stop = start + dur
     else:
         # set to None for reading complete file
         stop = dur
@@ -90,6 +94,8 @@ def torchaudio_loader(path, start=0, dur=None):
         return sig
         # otherwise loads a random excerpt
     else:
+        start = int(start)
+        dur   = int(dur)
         sig, rate = torchaudio.load(
             path, num_frames=dur, offset=start
         )

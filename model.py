@@ -52,7 +52,7 @@ class Waveunet(nn.Module):
         self.channel      = Ch
         self.kernel_size_down = kernel_size_down
         self.kernel_size_up   = kernel_size_up
-        self.stride       = stride
+        self.stride           = stride
 
         self.leaky = nn.LeakyReLU(negative_slope=0.2)
         #self.bn1   = BatchNorm1d()
@@ -76,8 +76,8 @@ class Waveunet(nn.Module):
         self.conv_bottleneck = Conv1d(
             in_channels=self.out_channels,
             out_channels=self.out_channels,
-            kernel_size=self.kernel_size_down,
-            padding=(self.kernel_size_down // 2),
+            kernel_size=self.kernel_size_up,
+            padding=(self.kernel_size_up // 2),
             stride=self.stride)
 
         # Decoding Path
@@ -93,7 +93,7 @@ class Waveunet(nn.Module):
                 padding=(self.kernel_size_up // 2),
                 stride=self.stride))
         
-        self.dec_conv.append(nn.Conv1d(in_channels=self.W,out_channels=self.channel,kernel_size=1))
+        self.dec_conv.append(nn.Conv1d(in_channels=self.W,out_channels=self.channel,kernel_size=1,padding=0,stride=1))
 
     def forward(self,x):
         """

@@ -30,22 +30,15 @@ import data
 import utils
 
 rootPath='../../../media/sdb1/Data/ETRI_Music/'
+experiment_id = np.random.randint(0,1000000)
 
 parser = argparse.ArgumentParser(description='Trainer')
 
-# which target do we want to train?
-parser.add_argument('--target', type=str, default='mix',
-                    help='target source (will be passed to the dataset)')
+parser.add_argument('--experiment-id', type=str, default=str(experiment_id))
 
 # Dataset paramaters
-parser.add_argument('--dataset', type=str, default="musdb",
-                    choices=[
-                        'musdb', 'aligned', 'sourcefolder',
-                        'trackfolder_var', 'trackfolder_fix'
-                    ],
-                    help='Name of the dataset.')
 parser.add_argument('--root', type=str, default=rootPath, help='root path of dataset')
-parser.add_argument('--output', type=str, default="waveunet",
+parser.add_argument('--output', type=str, default="output",
                     help='provide output path base folder name')
 parser.add_argument('--model', type=str, help='Path to checkpoint folder')
 
@@ -66,7 +59,7 @@ parser.add_argument('--seed', type=int, default=42, metavar='S',
                     help='random seed (default: 42)')
 
 # Model Parameters
-parser.add_argument('--seq-dur', type=float, default=16834, # 16834 samples
+parser.add_argument('--seq-dur', type=float, default=16384, # 16384 samples
                     help='Sequence duration in seconds'
                     'value of <=0.0 will use full/variable length')
 parser.add_argument('--hidden-size', type=int, default=512,
@@ -85,7 +78,6 @@ parser.add_argument('--no-cuda', action='store_true', default=False,
                     help='disables CUDA training')
 
 args, _ = parser.parse_known_args()
-print(args.nb_channels)
 
 
 allPaths  = []
@@ -98,9 +90,7 @@ trPaths = allPaths[:np.int(totLen*.9)]
 vPaths  = allPaths[np.int(totLen*.9):np.int(totLen*.95)]
 tePaths = allPaths[np.int(totLen*.95):]
 
-maxValSNR=-1000
-scale=1e-10
-zeropadding=1024+7040
+utils.dataset_items_to_csv(path=os.path.join(args.output,'testset_'+args.experiment_id+'.csv'),items=tePaths)
 
 random.shuffle(trPaths)
 tic=time.time()
@@ -134,7 +124,7 @@ random.seed(args.seed)
 train_dataset, valid_dataset, args = data.load_datasets(parser, args, train=trPaths, valid=vPaths)
 
 # create output dir if not exist
-target_path = Path("./output")
+target_path = Path(args.output)
 target_path.mkdir(parents=True, exist_ok=True)
 
 train_sampler = torch.utils.data.DataLoader(
@@ -147,9 +137,9 @@ valid_sampler = torch.utils.data.DataLoader(
     **dataloader_kwargs
 )
 
-waveunet = model.Waveunet().cuda()
+waveunet = model.Waveunet()
 waveunet.to(device)
-#summary(m,(1,16384),device='cpu')
+#summary(waveunet,(2,args.seq_dur),device='cpu')
 
 optimizer = torch.optim.Adam(
     waveunet.parameters(),
@@ -199,7 +189,7 @@ for epoch in t:
         },
         is_best=valid_loss == es.best,
         path=target_path,
-        target=args.target
+        target=args.experiment_id
     )
 
     # save params
@@ -215,7 +205,7 @@ for epoch in t:
         'commit': commit
     }
 
-    with open(Path(target_path,  args.target + '.json'), 'w') as outfile:
+    with open(Path(target_path,  args.experiment_id + '.json'), 'w') as outfile:
         outfile.write(json.dumps(params, indent=4, sort_keys=True))
 
     train_times.append(time.time() - end)
