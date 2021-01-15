@@ -43,7 +43,8 @@ def load_datasets(parser, args, train=None, valid=None):
 
     dataset_kwargs = {
         'root': args.root,
-        'seq_duration': args.seq_dur
+        'seq_duration': args.seq_dur,
+        'num_ch': args.nb_channels
     }
 
     train_dataset = Dataset(
@@ -71,6 +72,7 @@ class Dataset(torch.utils.data.Dataset):
         seq_duration=None,
         random_chunks=False,
         sample_rate=44100,
+        num_ch = 2,
         paths=None
     ):
 
@@ -80,6 +82,7 @@ class Dataset(torch.utils.data.Dataset):
         self.seq_duration = seq_duration
         self.random_chunks = random_chunks
         self.paths = paths
+        self.num_ch = num_ch
         # set the input and output files (accept glob)
         self.tuple_paths = list(self._get_paths())
         if not self.tuple_paths:
@@ -96,7 +99,9 @@ class Dataset(torch.utils.data.Dataset):
             start = 0
 
         audio = load_audio(path, start=start, dur=self.seq_duration)
-
+    
+        if self.num_ch == 1:
+            audio = torch.mean(audio, axis=0, keepdim=True)
         # return torch tensors
         return audio, audio
 

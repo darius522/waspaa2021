@@ -31,13 +31,12 @@ class Waveunet(nn.Module):
     def __init__(self,
         W = 24,
         H = 16384,
-        Ch = 2,
-        num_layers = 12,
+        n_ch = 1,
+        num_layers = 6,
         filter_size = 15,
         kernel_size_down = 15,
         kernel_size_up = 5,
         output_filter_size = 1,
-        output_activation  = 'tanh',
         stride = 1
     ):
 
@@ -49,12 +48,13 @@ class Waveunet(nn.Module):
         self.skip         = []
         self.dec_num_filt = []
         self.W            = W
-        self.channel      = Ch
+        self.channel      = n_ch
         self.kernel_size_down = kernel_size_down
         self.kernel_size_up   = kernel_size_up
         self.stride           = stride
 
         self.leaky = nn.LeakyReLU(negative_slope=0.2)
+        self.tanh  = nn.Tanh()
         #self.bn1   = BatchNorm1d()
         self.ds    = Downsample()
 
@@ -128,7 +128,8 @@ class Waveunet(nn.Module):
             # Upsample and Concatenate
             x = torch.cat((x, skip_layer),2)
             x = self.dec_conv[layer](x)
-            x = self.leaky(x)
+
+            x = self.leaky(x) if layer < (self.num_layers-1) else self.tanh(x)
             #x = self.bn1(x)
 
         return x
@@ -137,7 +138,7 @@ class Waveunet(nn.Module):
 class U_Net(nn.Module):
     def __init__(self, H, Hc, Hskip, W1, W2):
         super().__init__()
-        self.convEnc1 = nn.Conv1d(2, H, W1, stride=W1//2)
+        self.convEnc1 = nn.Conv1d(1, H, W1, stride=W1//2)
         self.convEnc2 = nn.Conv1d(H, H, W2, dilation=2)
         self.convEnc3 = nn.Conv1d(H, H, W2, dilation=4)
         self.convEnc4 = nn.Conv1d(H, Hc, W2, dilation=8)

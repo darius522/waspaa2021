@@ -35,7 +35,7 @@ experiment_id = np.random.randint(0,1000000)
 parser = argparse.ArgumentParser(description='Trainer')
 
 parser.add_argument('--experiment-id', type=str, default=str(experiment_id))
-parser.add_argument('--model', type=str, default="unet")
+parser.add_argument('--model', type=str, default="waveunet")
 
 # Dataset paramaters
 parser.add_argument('--root', type=str, default=rootPath, help='root path of dataset')
@@ -44,7 +44,7 @@ parser.add_argument('--output', type=str, default="output",
 
 # Trainig Parameters
 parser.add_argument('--epochs', type=int, default=300)
-parser.add_argument('--num-its', type=int, default=1000)
+parser.add_argument('--num-its', type=int, default=128)
 parser.add_argument('--batch-size', type=int, default=32)
 parser.add_argument('--lr', type=float, default=0.001,
                     help='learning rate, defaults to 1e-3')
@@ -60,7 +60,7 @@ parser.add_argument('--seed', type=int, default=42, metavar='S',
                     help='random seed (default: 42)')
 
 # Model Parameters
-parser.add_argument('--seq-dur', type=float, default=350912,
+parser.add_argument('--seq-dur', type=float, default=16384,
                     help='Sequence duration in seconds'
                     'value of <=0.0 will use full/variable length')
 parser.add_argument('--zero-pad', type=float, default=1024+7040, 
@@ -69,7 +69,7 @@ parser.add_argument('--hidden-size', type=int, default=512,
                     help='hidden size parameter of dense bottleneck layers')
 parser.add_argument('--bandwidth', type=int, default=16000,
                     help='maximum model bandwidth in herz')
-parser.add_argument('--nb-channels', type=int, default=2,
+parser.add_argument('--nb-channels', type=int, default=1,
                     help='set number of channels for model (1, 2)')
 parser.add_argument('--nb-workers', type=int, default=0,
                     help='Number of workers for dataloader.')
@@ -109,7 +109,7 @@ def train(args, model, device, train_sampler, optimizer):
             x, y = x.to(device), y.to(device)
             optimizer.zero_grad()
             if args.model == 'unet':
-                y_hat = model(torch.cat((torch.randn((args.batch_size, 2, args.zero_pad), device=device)*1e-10, x), 2))
+                y_hat = model(torch.cat((torch.randn((args.batch_size, args.nb_channels, args.zero_pad), device=device)*1e-10, x), 2))
             else:
                 y_hat = model(x)
             loss = torch.nn.functional.mse_loss(y_hat, y)
@@ -149,11 +149,12 @@ valid_sampler = torch.utils.data.DataLoader(
 )
 
 if args.model == 'waveunet':
-    model = models.Waveunet().to(device)
+    model = models.Waveunet(n_ch=args.nb_channels).to(device)
 elif args.model == 'unet':
     args.seq_dur = 350912
     model = models.U_Net(H=60, Hc=4, Hskip=4, W1=32, W2=5).to(device)
-#summary(model,(2,args.seq_dur),device='cpu')
+
+#summary(model,(args.nb_channels,args.seq_dur),device='cpu')
 
 optimizer = torch.optim.Adam(
     model.parameters(),
