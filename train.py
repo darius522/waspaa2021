@@ -5,6 +5,7 @@ import numpy as np
 import random
 from pathlib import Path
 import tqdm
+import json
 
 import torch.nn.functional as F
 from torchvision import datasets, transforms
@@ -13,6 +14,8 @@ from torchsummary import summary
 import _pickle as pickle
 from torch.utils.data import TensorDataset, DataLoader
 import torchaudio
+
+from knockknock import slack_sender
 
 import librosa
 import librosa.display
@@ -44,7 +47,7 @@ parser.add_argument('--output', type=str, default="output",
 
 # Trainig Parameters
 parser.add_argument('--epochs', type=int, default=300)
-parser.add_argument('--num-its', type=int, default=128)
+parser.add_argument('--num-its', type=int, default=64)
 parser.add_argument('--batch-size', type=int, default=32)
 parser.add_argument('--lr', type=float, default=0.001,
                     help='learning rate, defaults to 1e-3')
@@ -65,10 +68,6 @@ parser.add_argument('--seq-dur', type=float, default=16384,
                     'value of <=0.0 will use full/variable length')
 parser.add_argument('--zero-pad', type=float, default=1024+7040, 
                     help='Optional zero-padding to be added to batch')
-parser.add_argument('--hidden-size', type=int, default=512,
-                    help='hidden size parameter of dense bottleneck layers')
-parser.add_argument('--bandwidth', type=int, default=16000,
-                    help='maximum model bandwidth in herz')
 parser.add_argument('--nb-channels', type=int, default=1,
                     help='set number of channels for model (1, 2)')
 parser.add_argument('--nb-workers', type=int, default=0,
@@ -96,6 +95,7 @@ tePaths = allPaths[np.int(totLen*.95):]
 random.shuffle(trPaths)
 tic=time.time()
 
+
 def train(args, model, device, train_sampler, optimizer):
     losses = utils.AverageMeter()
     model.train()
@@ -104,20 +104,31 @@ def train(args, model, device, train_sampler, optimizer):
 
     for _ in i_bar:
         i_bar.set_description("Training Iteration")
-        for x, y in b_bar:
+        for x, _ in b_bar:
             b_bar.set_description("Training Batch")
-            x, y = x.to(device), y.to(device)
+            x = x.to(device)
             optimizer.zero_grad()
             if args.model == 'unet':
                 y_hat = model(torch.cat((torch.randn((args.batch_size, args.nb_channels, args.zero_pad), device=device)*1e-10, x), 2))
             else:
                 y_hat = model(x)
-            loss = torch.nn.functional.mse_loss(y_hat, y)
+            loss = torch.nn.functional.mse_loss(y_hat, x)
             loss.backward()
             optimizer.step()
-            losses.update(loss.item(), y.size(1))
-            torch.cuda.empty_cache()
+            losses.update(loss.item(), x.size(1))
+
     return losses.avg
+
+def valid(args, model, device, valid_sampler):
+    losses = utils.AverageMeter()
+    model.eval()
+    with torch.no_grad():
+        for x, y in valid_sampler:
+            x, y = x.to(device), y.to(device)
+            y_hat = model(x).to(device)
+            loss = torch.nn.functional.mse_loss(y_hat, y)
+            losses.update(loss.item(), y.size(1))
+        return losses.avg
 
 use_cuda = torch.cuda.is_available()
 device = torch.device("cuda:7" if use_cuda else "cpu")
@@ -136,7 +147,7 @@ train_dataset, valid_dataset, args = data.load_datasets(parser, args, train=trPa
 target_path = Path(os.path.join(args.output,args.model))
 target_path.mkdir(parents=True, exist_ok=True)
 
-utils.dataset_items_to_csv(path=os.path.join(args.output,args.model+'/'+'testset_'+args.model+args.experiment_id+'.csv'),items=tePaths)
+utils.dataset_items_to_csv(path=os.path.join(args.output,args.model+'/'+'test_'+args.experiment_id+'.csv'),items=tePaths)
 
 train_sampler = torch.utils.data.DataLoader(
     train_dataset, batch_size=args.batch_size, shuffle=True, drop_last=True,
@@ -177,6 +188,8 @@ valid_losses = []
 train_times = []
 best_epoch = 0
 
+webhook_url = "iu-saige.slack.com"
+@slack_sender(webhook_url=webhook_url, channel="https://iu-saige.slack.com/archives/G01HDMJKN9Z")
 for epoch in t:
     t.set_description("Training Epoch")
     end = time.time()
@@ -216,8 +229,7 @@ for epoch in t:
         'train_loss_history': train_losses,
         'valid_loss_history': valid_losses,
         'train_time_history': train_times,
-        'num_bad_epochs': es.num_bad_epochs,
-        'commit': commit
+        'num_bad_epochs': es.num_bad_epochs
     }
 
     with open(Path(target_path,  args.experiment_id + '.json'), 'w') as outfile:

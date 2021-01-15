@@ -32,7 +32,7 @@ class Waveunet(nn.Module):
         W = 24,
         H = 16384,
         n_ch = 1,
-        num_layers = 6,
+        num_layers = 3,
         filter_size = 15,
         kernel_size_down = 15,
         kernel_size_up = 5,
@@ -101,7 +101,7 @@ class Waveunet(nn.Module):
         Output: (nb_samples, nb_out_channels)
         """
 
-        inputs = x
+        self.skip = []
 
         # Encoding Path
         for layer in range(self.num_layers):
