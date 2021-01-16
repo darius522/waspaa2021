@@ -15,8 +15,6 @@ import _pickle as pickle
 from torch.utils.data import TensorDataset, DataLoader
 import torchaudio
 
-from knockknock import slack_sender
-
 import librosa
 import librosa.display
 
@@ -49,7 +47,7 @@ parser.add_argument('--output', type=str, default="output",
 parser.add_argument('--epochs', type=int, default=300)
 parser.add_argument('--num-its', type=int, default=64)
 parser.add_argument('--batch-size', type=int, default=32)
-parser.add_argument('--lr', type=float, default=0.001,
+parser.add_argument('--lr', type=float, default=0.01,
                     help='learning rate, defaults to 1e-3')
 parser.add_argument('--patience', type=int, default=140,
                     help='maximum number of epochs to train (default: 140)')
@@ -94,7 +92,6 @@ tePaths = allPaths[np.int(totLen*.95):]
 
 random.shuffle(trPaths)
 tic=time.time()
-
 
 def train(args, model, device, train_sampler, optimizer):
     losses = utils.AverageMeter()
@@ -144,7 +141,7 @@ random.seed(args.seed)
 train_dataset, valid_dataset, args = data.load_datasets(parser, args, train=trPaths, valid=vPaths)
 
 # create output dir if not exist
-target_path = Path(os.path.join(args.output,args.model))
+target_path = Path(os.path.join(args.output,args.model+"/"+args.experiment_id))
 target_path.mkdir(parents=True, exist_ok=True)
 
 utils.dataset_items_to_csv(path=os.path.join(args.output,args.model+'/'+'test_'+args.experiment_id+'.csv'),items=tePaths)
@@ -188,8 +185,6 @@ valid_losses = []
 train_times = []
 best_epoch = 0
 
-webhook_url = "iu-saige.slack.com"
-@slack_sender(webhook_url=webhook_url, channel="https://iu-saige.slack.com/archives/G01HDMJKN9Z")
 for epoch in t:
     t.set_description("Training Epoch")
     end = time.time()

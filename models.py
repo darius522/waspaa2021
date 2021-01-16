@@ -32,7 +32,7 @@ class Waveunet(nn.Module):
         W = 24,
         H = 16384,
         n_ch = 1,
-        num_layers = 3,
+        num_layers = 12,
         filter_size = 15,
         kernel_size_down = 15,
         kernel_size_up = 5,
@@ -45,6 +45,9 @@ class Waveunet(nn.Module):
         self.num_layers   = num_layers
         self.enc_conv     = nn.ModuleList()
         self.dec_conv     = nn.ModuleList()
+        self.bn_enc       = nn.ModuleList()
+        self.bn_dec       = nn.ModuleList()
+        self.us           = nn.Upsample(scale_factor=2, mode='linear')
         self.skip         = []
         self.dec_num_filt = []
         self.W            = W
@@ -55,7 +58,6 @@ class Waveunet(nn.Module):
 
         self.leaky = nn.LeakyReLU(negative_slope=0.2)
         self.tanh  = nn.Tanh()
-        #self.bn1   = BatchNorm1d()
         self.ds    = Downsample()
 
         # Encoding Path
@@ -71,14 +73,18 @@ class Waveunet(nn.Module):
                 padding=(self.kernel_size_down // 2),
                 stride=self.stride))
             
+            self.bn_enc.append(BatchNorm1d(self.out_channels))
+            
             self.dec_num_filt.append(self.out_channels)
 
         self.conv_bottleneck = Conv1d(
             in_channels=self.out_channels,
-            out_channels=self.out_channels,
+            out_channels=self.out_channels+self.W,
             kernel_size=self.kernel_size_up,
             padding=(self.kernel_size_up // 2),
             stride=self.stride)
+
+        self.bn_enc.append(BatchNorm1d(self.out_channels+self.W))
 
         # Decoding Path
         for layer in range(num_layers-1):
@@ -92,7 +98,10 @@ class Waveunet(nn.Module):
                 kernel_size=self.kernel_size_up,
                 padding=(self.kernel_size_up // 2),
                 stride=self.stride))
+            
+            self.bn_dec.append(BatchNorm1d(self.out_channels))
         
+        self.bn_dec.append(BatchNorm1d(self.channel))
         self.dec_conv.append(nn.Conv1d(in_channels=self.W,out_channels=self.channel,kernel_size=1,padding=0,stride=1))
 
     def forward(self,x):
@@ -103,19 +112,23 @@ class Waveunet(nn.Module):
 
         self.skip = []
 
+        inputs = x
+
         # Encoding Path
         for layer in range(self.num_layers):
 
             x = self.enc_conv[layer](x)
-
+            x = self.bn_enc[layer](x)
             x = self.leaky(x)
-            #x = self.bn1(x)
 
             # Save skip connection for decoding path and downsample
             x = self.ds(x)
             self.skip.append(x)
+            print("Enc: "+str(x.size()))
 
         x = self.conv_bottleneck(x)
+        x = self.bn_enc[layer+1](x)
+        print("Bottleneck: "+str(x.size()))
 
         # Decoding Path
         for layer in range(self.num_layers):
@@ -126,11 +139,12 @@ class Waveunet(nn.Module):
             num_filter = skip_layer.size()[2]
 
             # Upsample and Concatenate
-            x = torch.cat((x, skip_layer),2)
+            x = self.us(x)
+            print("Dec: "+str(x.size()))
+            x = torch.cat((x, skip_layer),1)
             x = self.dec_conv[layer](x)
-
+            x = self.bn_dec[layer](x)
             x = self.leaky(x) if layer < (self.num_layers-1) else self.tanh(x)
-            #x = self.bn1(x)
 
         return x
 
