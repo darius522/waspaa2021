@@ -3,17 +3,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
-class Upsample(nn.Module):
-    def __init__(self):
-        super().__init__()
-
-    def forward(self, x):
-        x = torch.unsqueeze(x, 1)
-        x = F.upsample(x, size=(1, x.size()[2]*2), mode='bilinear')
-        x = torch.squeeze(x, 1)
-        return x
-
 class Downsample(nn.Module):
     def __init__(self):
         super().__init__()
@@ -23,16 +12,11 @@ class Downsample(nn.Module):
 
 class Waveunet(nn.Module):
 
-    """
-    Input: [W x H x Ch x BatchSize] = [FeatMaps x Num_Spl x Ch x BatchSize]
-    Output: (nb_samples, nb_out_channels)
-    """
-
     def __init__(self,
         W = 24,
         H = 16384,
         n_ch = 1,
-        num_layers = 12,
+        num_layers = 6,
         filter_size = 15,
         kernel_size_down = 15,
         kernel_size_up = 5,
@@ -47,7 +31,7 @@ class Waveunet(nn.Module):
         self.dec_conv     = nn.ModuleList()
         self.bn_enc       = nn.ModuleList()
         self.bn_dec       = nn.ModuleList()
-        self.us           = nn.Upsample(scale_factor=2, mode='linear')
+        self.us           = nn.Upsample(scale_factor=2, mode='linear',align_corners=True)
         self.skip         = []
         self.dec_num_filt = []
         self.W            = W
@@ -77,6 +61,7 @@ class Waveunet(nn.Module):
             
             self.dec_num_filt.append(self.out_channels)
 
+        # Bottleneck
         self.conv_bottleneck = Conv1d(
             in_channels=self.out_channels,
             out_channels=self.out_channels+self.W,
@@ -87,12 +72,12 @@ class Waveunet(nn.Module):
         self.bn_enc.append(BatchNorm1d(self.out_channels+self.W))
 
         # Decoding Path
-        for layer in range(num_layers-1):
+        for layer in range(num_layers):
 
-            self.in_channels = self.dec_num_filt[-layer-1]
-            self.out_channels = self.in_channels - self.W
+            self.in_channels = self.dec_num_filt[-layer-1] * 2 + self.W
+            self.out_channels = self.dec_num_filt[-layer-1]
 
-            self.dec_conv.append(nn.ConvTranspose1d(
+            self.dec_conv.append(nn.Conv1d(
                 in_channels=self.in_channels,
                 out_channels=self.out_channels,
                 kernel_size=self.kernel_size_up,
@@ -101,17 +86,17 @@ class Waveunet(nn.Module):
             
             self.bn_dec.append(BatchNorm1d(self.out_channels))
         
-        self.bn_dec.append(BatchNorm1d(self.channel))
-        self.dec_conv.append(nn.Conv1d(in_channels=self.W,out_channels=self.channel,kernel_size=1,padding=0,stride=1))
+        self.dec_conv.append(nn.Conv1d(in_channels=self.W+self.channel,out_channels=self.channel,kernel_size=1,padding=0,stride=1))
 
     def forward(self,x):
         """
-        Input: [W x H x Ch x BatchSize] = [FeatMaps x Num_Spl x Ch x BatchSize]
-        Output: (nb_samples, nb_out_channels)
+        Input: [BatchSize x Channel x Samples]
+        Output: [BatchSize x Channel x Samples]
         """
 
         self.skip = []
 
+        # Save original inputs for outputs
         inputs = x
 
         # Encoding Path
@@ -122,13 +107,12 @@ class Waveunet(nn.Module):
             x = self.leaky(x)
 
             # Save skip connection for decoding path and downsample
-            x = self.ds(x)
             self.skip.append(x)
-            print("Enc: "+str(x.size()))
+            x = self.ds(x)
 
+        # Bottleneck
         x = self.conv_bottleneck(x)
         x = self.bn_enc[layer+1](x)
-        print("Bottleneck: "+str(x.size()))
 
         # Decoding Path
         for layer in range(self.num_layers):
@@ -140,13 +124,17 @@ class Waveunet(nn.Module):
 
             # Upsample and Concatenate
             x = self.us(x)
-            print("Dec: "+str(x.size()))
-            x = torch.cat((x, skip_layer),1)
+            x = torch.cat((x, skip_layer), 1)
             x = self.dec_conv[layer](x)
             x = self.bn_dec[layer](x)
-            x = self.leaky(x) if layer < (self.num_layers-1) else self.tanh(x)
+            x = self.leaky(x)
 
-        return x
+        # Final concatenation with original input, 1x1 convolution, and tanh output
+        x = torch.cat((x, inputs), 1)
+        x = self.dec_conv[-1](x)
+        y = self.tanh(x)
+
+        return y
 
 
 class U_Net(nn.Module):

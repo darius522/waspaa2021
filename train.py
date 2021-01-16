@@ -45,7 +45,7 @@ parser.add_argument('--output', type=str, default="output",
 
 # Trainig Parameters
 parser.add_argument('--epochs', type=int, default=300)
-parser.add_argument('--num-its', type=int, default=64)
+parser.add_argument('--num-its', type=int, default=10)
 parser.add_argument('--batch-size', type=int, default=32)
 parser.add_argument('--lr', type=float, default=0.01,
                     help='learning rate, defaults to 1e-3')
@@ -144,7 +144,7 @@ train_dataset, valid_dataset, args = data.load_datasets(parser, args, train=trPa
 target_path = Path(os.path.join(args.output,args.model+"/"+args.experiment_id))
 target_path.mkdir(parents=True, exist_ok=True)
 
-utils.dataset_items_to_csv(path=os.path.join(args.output,args.model+'/'+'test_'+args.experiment_id+'.csv'),items=tePaths)
+utils.dataset_items_to_csv(path=os.path.join(args.output,args.model+"/"+args.experiment_id+"/"+"test_set.csv"),items=tePaths)
 
 train_sampler = torch.utils.data.DataLoader(
     train_dataset, batch_size=args.batch_size, shuffle=True, drop_last=True,
