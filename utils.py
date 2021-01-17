@@ -3,6 +3,19 @@ import torch
 import os
 import numpy as np
 import csv
+import json
+from matplotlib import pyplot as plt
+
+def plot_loss_to_png(json_file):
+    with open(json_file) as jsonF: 
+        j = json.load(jsonF) 
+        train_hist = list(j["train_loss_history"])
+        valid_hist = list(j["valid_loss_history"])
+
+        plt.plot(train_hist,color='blue')
+        plt.plot(valid_hist,color='orange')
+
+        plt.savefig(os.path.splitext(json_file)[0]+'.png')
 
 def dataset_items_to_csv(path, items):
     with open(path, 'w') as f: 

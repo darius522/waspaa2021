@@ -229,6 +229,7 @@ for epoch in t:
 
     with open(Path(target_path,  args.experiment_id + '.json'), 'w') as outfile:
         outfile.write(json.dumps(params, indent=4, sort_keys=True))
+        utils.plot_loss_to_png(outfile)
 
     train_times.append(time.time() - end)
 
