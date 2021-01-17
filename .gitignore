@@ -1,4 +1,15 @@
 ._*
 __*
 *.csv
+*.png
+*.chkpnt
 .DS_Store
+App_data/*
+
+# exclude everything
+output/unet/
+output/waveunet/
+
+# exception to the rule
+!output/unet/.gitkeep 
+!output/waveunet/.gitkeep 

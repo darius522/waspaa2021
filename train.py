@@ -236,7 +236,3 @@ for epoch in t:
     if stop:
         print("Apply Early Stopping")
         break
-
-
-if __name__ == "__main__":
-    main()

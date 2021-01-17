@@ -6,16 +6,34 @@ import csv
 import json
 from matplotlib import pyplot as plt
 
+from scipy.interpolate import interp1d
+
+def smooth(scalars, weight):  # Weight between 0 and 1
+    last = scalars[0]  # First value in the plot (first timestep)
+    smoothed = list()
+    for point in scalars:
+        smoothed_val = last * weight + (1 - weight) * point  # Calculate smoothed value
+        smoothed.append(smoothed_val)                        # Save it
+        last = smoothed_val                                  # Anchor the last smoothed value
+    
+    return smoothed
+
+
 def plot_loss_to_png(json_file):
     with open(json_file) as jsonF: 
         j = json.load(jsonF) 
         train_hist = list(j["train_loss_history"])
         valid_hist = list(j["valid_loss_history"])
 
+        train_hist = smooth(train_hist,0.9)
         plt.plot(train_hist,color='blue')
-        plt.plot(valid_hist,color='orange')
+        plt.savefig(os.path.splitext(json_file)[0]+'_train_loss'+'.png')
 
-        plt.savefig(os.path.splitext(json_file)[0]+'.png')
+        plt.clf()
+
+        valid_hist = smooth(valid_hist,0.9)
+        plt.plot(valid_hist,color='orange')
+        plt.savefig(os.path.splitext(json_file)[0]+'_valid_loss'+'.png')
 
 def dataset_items_to_csv(path, items):
     with open(path, 'w') as f: 
