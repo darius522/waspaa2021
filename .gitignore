@@ -6,8 +6,5 @@ __*
 .DS_Store
 App_data/*
 
-# exclude everything
 output/
-
-# exception to the rule
 !output/.gitkeep 
