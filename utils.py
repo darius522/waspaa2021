@@ -74,6 +74,9 @@ def get_info_backend():
     if _sndfile_available():
         return soundfile_info
 
+def soundfile_writer(path, audio, sr):
+    import soundfile
+    soundfile.write(path, audio, sr)
 
 def soundfile_info(path):
     import soundfile
