@@ -25,7 +25,7 @@ parser.add_argument('--model-id', type=str, default='517737')
 # Model Parameters
 parser.add_argument('--seq-dur', type=float, default=16384)
 parser.add_argument('--nb-channels', type=int, default=1)
-parser.add_argument('--overlap', type=int, default=512)
+parser.add_argument('--overlap', type=int, default=64)
 parser.add_argument('--window', type=str, default='hann')
 
 args, _ = parser.parse_known_args()
@@ -33,7 +33,7 @@ args, _ = parser.parse_known_args()
 def load_model(
     model_name=args.model_name, 
     model_id=args.model_id, 
-    device='cuda:7'
+    device='cuda:6'
 ):
 
     model_path = os.path.join(args.main_dir,model_name+'/'+model_id)
@@ -64,39 +64,42 @@ def prepare_audio(audio):
     num_frames = math.ceil(audio_len / hop_size)
 
     prep_audio = torch.empty(num_frames, args.nb_channels, args.seq_dur)
+    timestamps = torch.empty(num_frames,2)
 
+    end = 0
     for i in range(num_frames):
 
         start = (i * hop_size)
         end   = start + args.seq_dur
 
+        timestamps[i,0] = start
+        timestamps[i,1] = end
+
         if audio_len > end:
-            slic = torch.narrow(audio,1,start,args.seq_dur)
-            prep_audio[i,:,:] = torch.narrow(audio,1,start,args.seq_dur)
+            prep_audio[i,:,:] = audio[:,start:end]#torch.narrow(audio,1,start,args.seq_dur)
         else:
             last = args.seq_dur - (end - audio_len)
-            prep_audio[i,:,:last] = torch.narrow(audio,1,start,last)
+            prep_audio[i,:,:last] = audio[:,start:start+last]#torch.narrow(audio,1,start,last)
             prep_audio[i,:,last:] = 0
     
-    return prep_audio
+    return prep_audio, timestamps
 
-def overlap_add(audio, device):
+def overlap_add(audio, timestamps, device):
     num_frames = audio.size()[0]
     target_len = num_frames * (args.seq_dur - args.overlap) + args.overlap
     y = torch.empty(args.nb_channels, target_len).to(device)
 
-    hann = torch.hann_window(args.overlap, periodic=True).to(device)
-    half_hann = int(args.overlap/2)
+    hann = torch.hann_window(args.overlap*2, periodic=True).to(device)
 
     for i in range(num_frames):
 
-        start = i * (args.seq_dur - args.overlap)
-        end   = start + args.seq_dur
+        start = int(timestamps[i,0].item())
+        end   = int(timestamps[i,1].item())
 
-        for j in range(args.nb_channels):
-            audio[i,j,:half_hann] *= hann[:half_hann]
-            audio[i,j,-half_hann:] *= hann[half_hann:]
-            y[j,start:end] += audio[i,j,:]
+        # for j in range(args.nb_channels):
+        #     audio[i,j,:args.overlap] *= hann[:args.overlap]
+        #     audio[i,j,-args.overlap:] *= hann[args.overlap:]
+        y[:,start:end] += audio[i,:,:]
 
     return y
         
@@ -105,7 +108,7 @@ def inference(
     audio,
     model_name=args.model_name, 
     model_id=args.model_id, 
-    device='cuda:7'
+    device='cuda:6'
 ):
     # convert numpy audio to torch
     audio_torch = torch.tensor(audio.T[None, ...]).float().to(device)
@@ -116,16 +119,16 @@ def inference(
         device=device
         )
 
-    x = prepare_audio(audio)
+    x, timestamps = prepare_audio(audio)
     x = x.to(device)
     y_tmp = model(x).to(device)
 
-    y = overlap_add(y_tmp,device=device)
+    y = overlap_add(y_tmp,timestamps,device=device)
 
     return y
 
 use_cuda = torch.cuda.is_available()
-device = torch.device("cuda:7" if use_cuda else "cpu")
+device = torch.device("cuda:6" if use_cuda else "cpu")
 print("Using GPU:", use_cuda)
 
 with open(os.path.join(args.main_dir,args.model_name+'/'+args.model_id+'/'+'test_set.csv'), newline='') as f:
@@ -140,5 +143,7 @@ if args.nb_channels == 1:
 
 y = inference(audio=audio,device=device)
 
+print("min: "+ str(torch.min(y)))
+print("max: "+ str(torch.max(y)))
 utils.soundfile_writer('./test_x.wav', audio.cpu().permute(1,0).detach().numpy(), 44100)
 utils.soundfile_writer('./test_y.wav', y.cpu().permute(1,0).detach().numpy(), 44100)

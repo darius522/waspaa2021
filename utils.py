@@ -30,6 +30,7 @@ def plot_loss_to_png(json_file):
         plt.savefig(os.path.splitext(json_file)[0]+'_train_loss'+'.png')
 
         plt.clf()
+        plt.cla()
 
         valid_hist = smooth(valid_hist,0.9)
         plt.plot(valid_hist,color='orange')
@@ -76,7 +77,7 @@ def get_info_backend():
 
 def soundfile_writer(path, audio, sr):
     import soundfile
-    soundfile.write(path, audio, sr)
+    soundfile.write(path, audio, sr, 'PCM_24')
 
 def soundfile_info(path):
     import soundfile

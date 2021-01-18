@@ -36,7 +36,7 @@ experiment_id = np.random.randint(0,1000000)
 parser = argparse.ArgumentParser(description='Trainer')
 
 parser.add_argument('--experiment-id', type=str, default=str(experiment_id))
-parser.add_argument('--model', type=str, default="waveunet")
+parser.add_argument('--model', type=str, default="waveunet_no_id")
 
 # Dataset paramaters
 parser.add_argument('--root', type=str, default=rootPath, help='root path of dataset')
@@ -156,8 +156,9 @@ valid_sampler = torch.utils.data.DataLoader(
     **dataloader_kwargs
 )
 
-if args.model == 'waveunet':
-    model = models.Waveunet(n_ch=args.nb_channels).to(device)
+if 'waveunet' in args.model:
+    m_type = models.Model.waveunet_no_id if args.model == 'waveunet_no_id' else models.Model.waveunet
+    model = models.Waveunet(n_ch=args.nb_channels,model=m_type).to(device)
 elif args.model == 'unet':
     args.seq_dur = 350912
     model = models.U_Net(H=60, Hc=4, Hskip=4, W1=32, W2=5).to(device)
@@ -229,7 +230,8 @@ for epoch in t:
 
     with open(Path(target_path,  args.experiment_id + '.json'), 'w') as outfile:
         outfile.write(json.dumps(params, indent=4, sort_keys=True))
-        utils.plot_loss_to_png(outfile)
+
+    utils.plot_loss_to_png(os.path.join(target_path,  args.experiment_id + '.json'))
 
     train_times.append(time.time() - end)
 

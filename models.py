@@ -3,7 +3,21 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from enum import Enum
+
+class Model(Enum):
+    waveunet_no_id = 1
+    waveunet = 2
+    waveunet_quant = 3
+
 class Downsample(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        return x[:,:,::2]
+
+class SkipEncoding(nn.Module):
     def __init__(self):
         super().__init__()
 
@@ -21,7 +35,8 @@ class Waveunet(nn.Module):
         kernel_size_down = 15,
         kernel_size_up = 5,
         output_filter_size = 1,
-        stride = 1
+        stride = 1,
+        model = Model.waveunet
     ):
 
         super(Waveunet, self).__init__()
@@ -39,6 +54,7 @@ class Waveunet(nn.Module):
         self.kernel_size_down = kernel_size_down
         self.kernel_size_up   = kernel_size_up
         self.stride           = stride
+        self.model            = model
 
         self.leaky = nn.LeakyReLU(negative_slope=0.2)
         self.tanh  = nn.Tanh()
@@ -74,8 +90,11 @@ class Waveunet(nn.Module):
         # Decoding Path
         for layer in range(num_layers):
 
-            self.in_channels = self.dec_num_filt[-layer-1] * 2 + self.W
             self.out_channels = self.dec_num_filt[-layer-1]
+            if self.model == Model.waveunet_no_id:
+                self.in_channels = self.out_channels + self.W
+            else:
+                self.in_channels = self.dec_num_filt[-layer-1] * 2 + self.W
 
             self.dec_conv.append(nn.Conv1d(
                 in_channels=self.in_channels,
@@ -86,7 +105,8 @@ class Waveunet(nn.Module):
             
             self.bn_dec.append(BatchNorm1d(self.out_channels))
         
-        self.dec_conv.append(nn.Conv1d(in_channels=self.W+self.channel,out_channels=self.channel,kernel_size=1,padding=0,stride=1))
+        last_conv_in = self.W if (self.model == Model.waveunet_no_id) else self.W + self.channel
+        self.dec_conv.append(nn.Conv1d(in_channels=last_conv_in,out_channels=self.channel,kernel_size=1,padding=0,stride=1))
 
     def forward(self,x):
         """
@@ -107,7 +127,9 @@ class Waveunet(nn.Module):
             x = self.leaky(x)
 
             # Save skip connection for decoding path and downsample
-            self.skip.append(x)
+            if not self.model == Model.waveunet_no_id:
+                self.skip.append(x)
+
             x = self.ds(x)
 
         # Bottleneck
@@ -117,20 +139,20 @@ class Waveunet(nn.Module):
         # Decoding Path
         for layer in range(self.num_layers):
 
-            skip_layer = self.skip[-layer-1]
-            
-            # Make sure that num_filter coincide with current layer shape
-            num_filter = skip_layer.size()[2]
-
             # Upsample and Concatenate
             x = self.us(x)
-            x = torch.cat((x, skip_layer), 1)
+
+            if not self.model == Model.waveunet_no_id:
+                skip_layer = self.skip[-layer-1]
+                x = torch.cat((x, skip_layer), 1)
+
             x = self.dec_conv[layer](x)
             x = self.bn_dec[layer](x)
             x = self.leaky(x)
 
         # Final concatenation with original input, 1x1 convolution, and tanh output
-        x = torch.cat((x, inputs), 1)
+        if not self.model == Model.waveunet_no_id:
+            x = torch.cat((x, inputs), 1)
         x = self.dec_conv[-1](x)
         y = self.tanh(x)
 
