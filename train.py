@@ -36,7 +36,7 @@ experiment_id = np.random.randint(0,1000000)
 parser = argparse.ArgumentParser(description='Trainer')
 
 parser.add_argument('--experiment-id', type=str, default=str(experiment_id))
-parser.add_argument('--model', type=str, default="waveunet_no_id")
+parser.add_argument('--model', type=str, default="waveunet_quant")
 
 # Dataset paramaters
 parser.add_argument('--root', type=str, default=rootPath, help='root path of dataset')
@@ -128,7 +128,7 @@ def valid(args, model, device, valid_sampler):
         return losses.avg
 
 use_cuda = torch.cuda.is_available()
-device = torch.device("cuda:7" if use_cuda else "cpu")
+device = torch.device("cuda:6" if use_cuda else "cpu")
 print("Using GPU:", use_cuda)
 dataloader_kwargs = {'num_workers': args.nb_workers, 'pin_memory': True} if use_cuda else {}
 
@@ -157,7 +157,13 @@ valid_sampler = torch.utils.data.DataLoader(
 )
 
 if 'waveunet' in args.model:
-    m_type = models.Model.waveunet_no_id if args.model == 'waveunet_no_id' else models.Model.waveunet
+    if args.model == 'waveunet_no_id':
+        m_type = models.Model.waveunet_no_id
+    elif args.model == 'waveunet':
+        m_type = models.Model.waveunet
+    elif args.model == 'waveunet_quant':
+        m_type = models.Model.waveunet_quant
+
     model = models.Waveunet(n_ch=args.nb_channels,model=m_type).to(device)
 elif args.model == 'unet':
     args.seq_dur = 350912

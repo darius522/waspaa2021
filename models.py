@@ -18,11 +18,100 @@ class Downsample(nn.Module):
         return x[:,:,::2]
 
 class SkipEncoding(nn.Module):
-    def __init__(self):
-        super().__init__()
+    def __init__(self,         
+        W_layer = 12, # maps per layer
+        W = 24, # input maps
+        H = 16384, # input samples
+        num_layers = 3,
+        kernel_size_down = 15,
+        kernel_size_up = 5,
+        stride = 1
+    ):
+        super(SkipEncoding, self).__init__()
+
+        self.num_layers   = num_layers
+        self.enc_conv     = nn.ModuleList()
+        self.dec_conv     = nn.ModuleList()
+        self.bn_enc       = nn.ModuleList()
+        self.bn_dec       = nn.ModuleList()
+        self.dec_num_filt = []
+        self.W            = W
+        self.W_layer      = W_layer
+        self.kernel_size_down = kernel_size_down
+        self.kernel_size_up   = kernel_size_up
+        self.stride           = stride
+
+        self.leaky = nn.LeakyReLU(negative_slope=0.2)
+        self.ds    = Downsample()
+        self.us    = nn.Upsample(scale_factor=2, mode='linear',align_corners=True)
+
+        # Encoding Path
+        for layer in range(num_layers):
+
+            self.out_channels = self.W + (self.W_layer * (layer+1))
+            self.in_channels  = self.out_channels - self.W_layer
+
+            self.enc_conv.append(nn.Conv1d(
+                in_channels=self.in_channels,
+                out_channels=self.out_channels,
+                kernel_size=self.kernel_size_down,
+                padding=(self.kernel_size_down // 2),
+                stride=self.stride))
+            
+            self.bn_enc.append(BatchNorm1d(self.out_channels))
+            
+            self.dec_num_filt.append(self.out_channels)
+
+        # Bottleneck
+        self.conv_bottleneck = Conv1d(
+            in_channels=self.out_channels,
+            out_channels=self.out_channels+self.W_layer,
+            kernel_size=self.kernel_size_up,
+            padding=(self.kernel_size_up // 2),
+            stride=self.stride)
+
+        self.bn_enc.append(BatchNorm1d(self.out_channels+self.W_layer))
+
+        # Decoding Path
+        for layer in range(num_layers):
+
+            self.out_channels = self.dec_num_filt[-layer-1] - self.W_layer if (layer == num_layers-1) else self.dec_num_filt[-layer-1]
+            self.in_channels = self.dec_num_filt[-layer-1] + self.W_layer
+
+            self.dec_conv.append(nn.Conv1d(
+                in_channels=self.in_channels,
+                out_channels=self.out_channels,
+                kernel_size=self.kernel_size_up,
+                padding=(self.kernel_size_up // 2),
+                stride=self.stride))
+            
+            self.bn_dec.append(BatchNorm1d(self.out_channels))
 
     def forward(self, x):
-        return x[:,:,::2]
+
+        # Encoding Path
+        for layer in range(self.num_layers):
+
+            x = self.enc_conv[layer](x)
+            x = self.bn_enc[layer](x)
+            x = self.leaky(x)
+            x = self.ds(x)
+
+        # Bottleneck
+        x = self.conv_bottleneck(x)
+        x = self.bn_enc[-1](x)
+
+        # Decoding Path
+        for layer in range(self.num_layers):
+
+            # Upsample and Concatenate
+            x = self.us(x)
+
+            x = self.dec_conv[layer](x)
+            x = self.bn_dec[layer](x)
+            x = self.leaky(x)
+
+        return x      
 
 class Waveunet(nn.Module):
 
@@ -31,7 +120,6 @@ class Waveunet(nn.Module):
         H = 16384,
         n_ch = 1,
         num_layers = 6,
-        filter_size = 15,
         kernel_size_down = 15,
         kernel_size_up = 5,
         output_filter_size = 1,
@@ -41,16 +129,16 @@ class Waveunet(nn.Module):
 
         super(Waveunet, self).__init__()
 
-        self.num_layers   = num_layers
-        self.enc_conv     = nn.ModuleList()
-        self.dec_conv     = nn.ModuleList()
-        self.bn_enc       = nn.ModuleList()
-        self.bn_dec       = nn.ModuleList()
-        self.us           = nn.Upsample(scale_factor=2, mode='linear',align_corners=True)
-        self.skip         = []
-        self.dec_num_filt = []
-        self.W            = W
-        self.channel      = n_ch
+        self.num_layers    = num_layers
+        self.enc_conv      = nn.ModuleList()
+        self.dec_conv      = nn.ModuleList()
+        self.bn_enc        = nn.ModuleList()
+        self.bn_dec        = nn.ModuleList()
+        self.skip_encoders = nn.ModuleList()
+        self.skip          = []
+        self.dec_num_filt  = []
+        self.W             = W
+        self.channel       = n_ch
         self.kernel_size_down = kernel_size_down
         self.kernel_size_up   = kernel_size_up
         self.stride           = stride
@@ -59,6 +147,7 @@ class Waveunet(nn.Module):
         self.leaky = nn.LeakyReLU(negative_slope=0.2)
         self.tanh  = nn.Tanh()
         self.ds    = Downsample()
+        self.us    = nn.Upsample(scale_factor=2, mode='linear',align_corners=True)
 
         # Encoding Path
         for layer in range(num_layers):
@@ -95,6 +184,10 @@ class Waveunet(nn.Module):
                 self.in_channels = self.out_channels + self.W
             else:
                 self.in_channels = self.dec_num_filt[-layer-1] * 2 + self.W
+            
+            # If quant model, store intermediate autoencoders
+            if self.model == Model.waveunet_quant:
+                self.skip_encoders.append(SkipEncoding(W=self.dec_num_filt[-layer-1]))
 
             self.dec_conv.append(nn.Conv1d(
                 in_channels=self.in_channels,
@@ -104,6 +197,10 @@ class Waveunet(nn.Module):
                 stride=self.stride))
             
             self.bn_dec.append(BatchNorm1d(self.out_channels))
+        
+        # If quant model, store input autoencoder
+        if self.model == Model.waveunet_quant:
+            self.skip_encoders.append(SkipEncoding(W=self.channel))
         
         last_conv_in = self.W if (self.model == Model.waveunet_no_id) else self.W + self.channel
         self.dec_conv.append(nn.Conv1d(in_channels=last_conv_in,out_channels=self.channel,kernel_size=1,padding=0,stride=1))
@@ -142,8 +239,16 @@ class Waveunet(nn.Module):
             # Upsample and Concatenate
             x = self.us(x)
 
+            # If model uses skip connection (either quant or identity)
             if not self.model == Model.waveunet_no_id:
-                skip_layer = self.skip[-layer-1]
+                if self.model == Model.waveunet:
+                    skip_layer = self.skip[-layer-1]
+                elif self.model == Model.waveunet_quant:
+                    print(self.skip_encoders[layer].W)
+                    print(self.skip[-layer-1].size())
+                    print('\n\n')
+                    skip_layer = self.skip_encoders[layer](self.skip[-layer-1])
+
                 x = torch.cat((x, skip_layer), 1)
 
             x = self.dec_conv[layer](x)
@@ -152,11 +257,17 @@ class Waveunet(nn.Module):
 
         # Final concatenation with original input, 1x1 convolution, and tanh output
         if not self.model == Model.waveunet_no_id:
+            if self.model == Model.waveunet_quant:
+                inputs = self.skip_encoders[-1](inputs)
             x = torch.cat((x, inputs), 1)
         x = self.dec_conv[-1](x)
         y = self.tanh(x)
 
         return y
+
+
+
+
 
 
 class U_Net(nn.Module):
