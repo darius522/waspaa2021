@@ -6,9 +6,10 @@ import torch.nn.functional as F
 from enum import Enum
 
 class Model(Enum):
-    waveunet_no_id = 1
-    waveunet = 2
-    waveunet_quant = 3
+    waveunet_no_skip = 1
+    waveunet_skip = 2
+    waveunet_enc_skip = 3
+    waveunet_enc_skip_quant = 4
 
 class Downsample(nn.Module):
     def __init__(self):
@@ -124,7 +125,7 @@ class Waveunet(nn.Module):
         kernel_size_up = 5,
         output_filter_size = 1,
         stride = 1,
-        model = Model.waveunet
+        model = Model.waveunet_skip
     ):
 
         super(Waveunet, self).__init__()
@@ -180,13 +181,13 @@ class Waveunet(nn.Module):
         for layer in range(num_layers):
 
             self.out_channels = self.dec_num_filt[-layer-1]
-            if self.model == Model.waveunet_no_id:
+            if self.model == Model.waveunet_no_skip:
                 self.in_channels = self.out_channels + self.W
             else:
                 self.in_channels = self.dec_num_filt[-layer-1] * 2 + self.W
             
-            # If quant model, store intermediate autoencoders
-            if self.model == Model.waveunet_quant:
+            # If enc skip model, store intermediate autoencoders
+            if self.model == Model.waveunet_enc_skip:
                 self.skip_encoders.append(SkipEncoding(W=self.dec_num_filt[-layer-1]))
 
             self.dec_conv.append(nn.Conv1d(
@@ -198,11 +199,11 @@ class Waveunet(nn.Module):
             
             self.bn_dec.append(BatchNorm1d(self.out_channels))
         
-        # If quant model, store input autoencoder
-        if self.model == Model.waveunet_quant:
+        # If enc skip model, store input autoencoder
+        if self.model == Model.waveunet_enc_skip:
             self.skip_encoders.append(SkipEncoding(W=self.channel))
         
-        last_conv_in = self.W if (self.model == Model.waveunet_no_id) else self.W + self.channel
+        last_conv_in = self.W if (self.model == Model.waveunet_no_skip) else self.W + self.channel
         self.dec_conv.append(nn.Conv1d(in_channels=last_conv_in,out_channels=self.channel,kernel_size=1,padding=0,stride=1))
 
     def forward(self,x):
@@ -218,13 +219,12 @@ class Waveunet(nn.Module):
 
         # Encoding Path
         for layer in range(self.num_layers):
-
             x = self.enc_conv[layer](x)
             x = self.bn_enc[layer](x)
             x = self.leaky(x)
 
             # Save skip connection for decoding path and downsample
-            if not self.model == Model.waveunet_no_id:
+            if not self.model == Model.waveunet_no_skip:
                 self.skip.append(x)
 
             x = self.ds(x)
@@ -235,18 +235,14 @@ class Waveunet(nn.Module):
 
         # Decoding Path
         for layer in range(self.num_layers):
-
             # Upsample and Concatenate
             x = self.us(x)
 
             # If model uses skip connection (either quant or identity)
-            if not self.model == Model.waveunet_no_id:
-                if self.model == Model.waveunet:
+            if not self.model == Model.waveunet_no_skip:
+                if self.model == Model.waveunet_skip:
                     skip_layer = self.skip[-layer-1]
-                elif self.model == Model.waveunet_quant:
-                    print(self.skip_encoders[layer].W)
-                    print(self.skip[-layer-1].size())
-                    print('\n\n')
+                elif self.model == Model.waveunet_enc_skip:
                     skip_layer = self.skip_encoders[layer](self.skip[-layer-1])
 
                 x = torch.cat((x, skip_layer), 1)
@@ -256,8 +252,8 @@ class Waveunet(nn.Module):
             x = self.leaky(x)
 
         # Final concatenation with original input, 1x1 convolution, and tanh output
-        if not self.model == Model.waveunet_no_id:
-            if self.model == Model.waveunet_quant:
+        if not self.model == Model.waveunet_no_skip:
+            if self.model == Model.waveunet_enc_skip:
                 inputs = self.skip_encoders[-1](inputs)
             x = torch.cat((x, inputs), 1)
         x = self.dec_conv[-1](x)

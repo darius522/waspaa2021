@@ -11,6 +11,7 @@ import torch.nn.functional as F
 from torchvision import datasets, transforms
 from torch.autograd import Variable
 from torchsummary import summary
+from torch.utils.tensorboard import SummaryWriter
 import _pickle as pickle
 from torch.utils.data import TensorDataset, DataLoader
 import torchaudio
@@ -36,7 +37,7 @@ experiment_id = np.random.randint(0,1000000)
 parser = argparse.ArgumentParser(description='Trainer')
 
 parser.add_argument('--experiment-id', type=str, default=str(experiment_id))
-parser.add_argument('--model', type=str, default="waveunet_quant")
+parser.add_argument('--model', type=str, default="waveunet_skip")
 
 # Dataset paramaters
 parser.add_argument('--root', type=str, default=rootPath, help='root path of dataset')
@@ -47,8 +48,8 @@ parser.add_argument('--output', type=str, default="output",
 parser.add_argument('--epochs', type=int, default=300)
 parser.add_argument('--num-its', type=int, default=10)
 parser.add_argument('--batch-size', type=int, default=32)
-parser.add_argument('--lr', type=float, default=0.01,
-                    help='learning rate, defaults to 1e-3')
+parser.add_argument('--lr', type=float, default=0.001,
+                    help='learning rate, defaults to 1e-4')
 parser.add_argument('--patience', type=int, default=140,
                     help='maximum number of epochs to train (default: 140)')
 parser.add_argument('--lr-decay-patience', type=int, default=80,
@@ -68,14 +69,15 @@ parser.add_argument('--zero-pad', type=float, default=1024+7040,
                     help='Optional zero-padding to be added to batch')
 parser.add_argument('--nb-channels', type=int, default=1,
                     help='set number of channels for model (1, 2)')
+parser.add_argument('--sample-rate', type=int, default=44100)
 parser.add_argument('--nb-workers', type=int, default=0,
                     help='Number of workers for dataloader.')
 
 # Misc Parameters
 parser.add_argument('--quiet', action='store_true', default=False,
                     help='less verbose during training')
-parser.add_argument('--no-cuda', action='store_true', default=False,
-                    help='disables CUDA training')
+parser.add_argument('--device', action='store_true', default='cuda:6',
+                    help='cpu or cuda')
 
 args, _ = parser.parse_known_args()
 
@@ -93,16 +95,15 @@ tePaths = allPaths[np.int(totLen*.95):]
 random.shuffle(trPaths)
 tic=time.time()
 
-def train(args, model, device, train_sampler, optimizer):
+def train(args, model, device, train_sampler, optimizer, writer, epoch):
     losses = utils.AverageMeter()
     model.train()
-    i_bar = tqdm.tqdm(range(args.num_its), disable=args.quiet)
-    b_bar = tqdm.tqdm(train_sampler, disable=args.quiet)
+    it_bar = tqdm.tqdm(range(args.num_its), disable=args.quiet)
 
-    for _ in i_bar:
-        i_bar.set_description("Training Iteration")
-        for x, _ in b_bar:
-            b_bar.set_description("Training Batch")
+    # Total num it: num_its x batch_size x training examples
+    for it in it_bar:
+        it_bar.set_description("Training Iteration")
+        for batch, (x, _) in enumerate(train_sampler):
             x = x.to(device)
             optimizer.zero_grad()
             if args.model == 'unet':
@@ -114,25 +115,29 @@ def train(args, model, device, train_sampler, optimizer):
             optimizer.step()
             losses.update(loss.item(), x.size(1))
 
+
+    writer.add_audio("train_x", torch.mean(x, 0), epoch, sample_rate=args.sample_rate)
+    writer.add_audio("train_yhat", torch.mean(y_hat, 0), epoch, sample_rate=args.sample_rate)
     return losses.avg
 
-def valid(args, model, device, valid_sampler):
+def valid(args, model, device, valid_sampler, writer, epoch):
     losses = utils.AverageMeter()
     model.eval()
     with torch.no_grad():
-        for x, y in valid_sampler:
-            x, y = x.to(device), y.to(device)
-            y_hat = model(x).to(device)
-            loss = torch.nn.functional.mse_loss(y_hat, y)
-            losses.update(loss.item(), y.size(1))
+        for i, (x, _) in enumerate(valid_sampler):
+            x = x.to(device)
+            y_hat = model(x)
+            loss = torch.nn.functional.mse_loss(y_hat, x)
+            losses.update(loss.item(), x.size(1))
+
+        writer.add_audio("valid_x", torch.mean(x, 0), epoch, sample_rate=args.sample_rate)
+        writer.add_audio("valid_yhat", torch.mean(y_hat, 0), epoch, sample_rate=args.sample_rate)
         return losses.avg
 
 use_cuda = torch.cuda.is_available()
-device = torch.device("cuda:6" if use_cuda else "cpu")
+device = torch.device(args.device if use_cuda else "cpu")
 print("Using GPU:", use_cuda)
 dataloader_kwargs = {'num_workers': args.nb_workers, 'pin_memory': True} if use_cuda else {}
-
-repo_dir = os.path.abspath(os.path.dirname(__file__))
 
 # use jpg or npy
 torch.manual_seed(args.seed)
@@ -140,9 +145,11 @@ random.seed(args.seed)
 
 train_dataset, valid_dataset, args = data.load_datasets(parser, args, train=trPaths, valid=vPaths)
 
-# create output dir if not exist
+# create output dir / log dir if not exist
 target_path = Path(os.path.join(args.output,args.model+"/"+args.experiment_id))
 target_path.mkdir(parents=True, exist_ok=True)
+log_dir = Path(os.path.join(target_path,'log_dir'))
+log_dir.mkdir(parents=True, exist_ok=True)
 
 utils.dataset_items_to_csv(path=os.path.join(args.output,args.model+"/"+args.experiment_id+"/"+"test_set.csv"),items=tePaths)
 
@@ -157,18 +164,19 @@ valid_sampler = torch.utils.data.DataLoader(
 )
 
 if 'waveunet' in args.model:
-    if args.model == 'waveunet_no_id':
-        m_type = models.Model.waveunet_no_id
-    elif args.model == 'waveunet':
-        m_type = models.Model.waveunet
-    elif args.model == 'waveunet_quant':
-        m_type = models.Model.waveunet_quant
+    if args.model == 'waveunet_no_skip':
+        m_type = models.Model.waveunet_no_skip
+    elif args.model == 'waveunet_skip':
+        m_type = models.Model.waveunet_skip
+    elif args.model == 'waveunet_enc_skip':
+        m_type = models.Model.waveunet_enc_skip
 
     model = models.Waveunet(n_ch=args.nb_channels,model=m_type).to(device)
 elif args.model == 'unet':
     args.seq_dur = 350912
     model = models.U_Net(H=60, Hc=4, Hskip=4, W1=32, W2=5).to(device)
 
+writer = SummaryWriter(log_dir)
 #summary(model,(args.nb_channels,args.seq_dur),device='cpu')
 
 optimizer = torch.optim.Adam(
@@ -195,11 +203,15 @@ best_epoch = 0
 for epoch in t:
     t.set_description("Training Epoch")
     end = time.time()
-    train_loss = train(args, model, device, train_sampler, optimizer)
-    valid_loss = valid(args, model, device, valid_sampler)
+    train_loss = train(args, model, device, train_sampler, optimizer, writer, epoch)
+    valid_loss = valid(args, model, device, valid_sampler, writer, epoch)
     scheduler.step(valid_loss)
     train_losses.append(train_loss)
     valid_losses.append(valid_loss)
+
+    writer.add_scalar("lr", optimizer.param_groups[0]["lr"], epoch)
+    writer.add_scalar("train_loss", train_loss, epoch)
+    writer.add_scalar("valiid_loss", valid_loss, epoch)
 
     t.set_postfix(
         train_loss=train_loss, val_loss=valid_loss

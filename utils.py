@@ -134,7 +134,7 @@ def torchaudio_loader(path, start=0, dur=None):
         sig, rate = torchaudio.load(
             path, num_frames=dur, offset=start
         )
-        return sig
+        return sig, rate
 
 
 def load_info(path):
@@ -142,9 +142,15 @@ def load_info(path):
     return loader(path)
 
 
-def load_audio(path, start=0, dur=None):
+def load_audio(path, start=0, dur=None, sr=44100):
+    import torchaudio
     loader = get_loading_backend()
-    return loader(path, start=start, dur=dur)
+    audio, fs = loader(path, start=start, dur=dur)
+    
+    if not fs == sr:
+        audio = torchaudio.transforms.Resample(fs, sr)(audio)
+
+    return audio
 
 
 def bandwidth_to_max_bin(rate, n_fft, bandwidth):

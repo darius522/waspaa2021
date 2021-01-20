@@ -5,6 +5,7 @@ import random
 import musdb
 import torch
 import tqdm
+import math
 
 from utils import load_audio, load_info
 
@@ -44,7 +45,8 @@ def load_datasets(parser, args, train=None, valid=None):
     dataset_kwargs = {
         'root': args.root,
         'seq_duration': args.seq_dur,
-        'num_ch': args.nb_channels
+        'num_ch': args.nb_channels,
+        'sample_rate': args.sample_rate
     }
 
     train_dataset = Dataset(
@@ -91,18 +93,23 @@ class Dataset(torch.utils.data.Dataset):
     def __getitem__(self, index):
         path = self.tuple_paths[index]
 
+        info = load_info(path)
+        # If not target sample rate. adjust the duration accordingly so it matches seq_dur on resampling
+        seq_dur = self.seq_duration
+        if not info['samplerate'] == self.sample_rate:
+            seq_dur = math.floor((info['samplerate']/self.sample_rate)*self.seq_duration)
+
         if self.random_chunks:
-            info = load_info(path)
             duration = info['samples']
-            start = random.uniform(0, duration - self.seq_duration)
+            start = random.uniform(0, duration - seq_dur)
         else:
             start = 0
 
-        audio = load_audio(path, start=start, dur=self.seq_duration)
+        audio = load_audio(path, start=start, dur=seq_dur, sr=self.sample_rate)
     
         if self.num_ch == 1:
             audio = torch.mean(audio, axis=0, keepdim=True)
-        # return torch tensors
+
         return audio, audio
 
     def __len__(self):
