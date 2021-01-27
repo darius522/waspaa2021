@@ -1,7 +1,9 @@
-from torch.nn import LSTM, Linear, BatchNorm1d, Parameter, Conv1d, ConvTranspose1d
+from torch.nn import BatchNorm1d, Parameter, Conv1d, ConvTranspose1d
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+import modules
 
 from enum import Enum
 
@@ -10,109 +12,7 @@ class Model(Enum):
     waveunet_skip = 2
     waveunet_enc_skip = 3
     waveunet_enc_skip_quant = 4
-
-class Downsample(nn.Module):
-    def __init__(self):
-        super().__init__()
-
-    def forward(self, x):
-        return x[:,:,::2]
-
-class SkipEncoding(nn.Module):
-    def __init__(self,         
-        W_layer = 12, # maps per layer
-        W = 24, # input maps
-        H = 16384, # input samples
-        num_layers = 3,
-        kernel_size_down = 15,
-        kernel_size_up = 5,
-        stride = 1
-    ):
-        super(SkipEncoding, self).__init__()
-
-        self.num_layers   = num_layers
-        self.enc_conv     = nn.ModuleList()
-        self.dec_conv     = nn.ModuleList()
-        self.bn_enc       = nn.ModuleList()
-        self.bn_dec       = nn.ModuleList()
-        self.dec_num_filt = []
-        self.W            = W
-        self.W_layer      = W_layer
-        self.kernel_size_down = kernel_size_down
-        self.kernel_size_up   = kernel_size_up
-        self.stride           = stride
-
-        self.leaky = nn.LeakyReLU(negative_slope=0.2)
-        self.ds    = Downsample()
-        self.us    = nn.Upsample(scale_factor=2, mode='linear',align_corners=True)
-
-        # Encoding Path
-        for layer in range(num_layers):
-
-            self.out_channels = self.W + (self.W_layer * (layer+1))
-            self.in_channels  = self.out_channels - self.W_layer
-
-            self.enc_conv.append(nn.Conv1d(
-                in_channels=self.in_channels,
-                out_channels=self.out_channels,
-                kernel_size=self.kernel_size_down,
-                padding=(self.kernel_size_down // 2),
-                stride=self.stride))
-            
-            self.bn_enc.append(BatchNorm1d(self.out_channels))
-            
-            self.dec_num_filt.append(self.out_channels)
-
-        # Bottleneck
-        self.conv_bottleneck = Conv1d(
-            in_channels=self.out_channels,
-            out_channels=self.out_channels+self.W_layer,
-            kernel_size=self.kernel_size_up,
-            padding=(self.kernel_size_up // 2),
-            stride=self.stride)
-
-        self.bn_enc.append(BatchNorm1d(self.out_channels+self.W_layer))
-
-        # Decoding Path
-        for layer in range(num_layers):
-
-            self.out_channels = self.dec_num_filt[-layer-1] - self.W_layer if (layer == num_layers-1) else self.dec_num_filt[-layer-1]
-            self.in_channels = self.dec_num_filt[-layer-1] + self.W_layer
-
-            self.dec_conv.append(nn.Conv1d(
-                in_channels=self.in_channels,
-                out_channels=self.out_channels,
-                kernel_size=self.kernel_size_up,
-                padding=(self.kernel_size_up // 2),
-                stride=self.stride))
-            
-            self.bn_dec.append(BatchNorm1d(self.out_channels))
-
-    def forward(self, x):
-
-        # Encoding Path
-        for layer in range(self.num_layers):
-
-            x = self.enc_conv[layer](x)
-            x = self.bn_enc[layer](x)
-            x = self.leaky(x)
-            x = self.ds(x)
-
-        # Bottleneck
-        x = self.conv_bottleneck(x)
-        x = self.bn_enc[-1](x)
-
-        # Decoding Path
-        for layer in range(self.num_layers):
-
-            # Upsample and Concatenate
-            x = self.us(x)
-
-            x = self.dec_conv[layer](x)
-            x = self.bn_dec[layer](x)
-            x = self.leaky(x)
-
-        return x      
+     
 
 class Waveunet(nn.Module):
 
@@ -147,7 +47,7 @@ class Waveunet(nn.Module):
 
         self.leaky = nn.LeakyReLU(negative_slope=0.2)
         self.tanh  = nn.Tanh()
-        self.ds    = Downsample()
+        self.ds    = modules.Downsample()
         self.us    = nn.Upsample(scale_factor=2, mode='linear',align_corners=True)
 
         # Encoding Path
@@ -188,7 +88,7 @@ class Waveunet(nn.Module):
             
             # If enc skip model, store intermediate autoencoders
             if self.model == Model.waveunet_enc_skip:
-                self.skip_encoders.append(SkipEncoding(W=self.dec_num_filt[-layer-1]))
+                self.skip_encoders.append(modules.SkipEncoding(W=self.dec_num_filt[-layer-1]))
 
             self.dec_conv.append(nn.Conv1d(
                 in_channels=self.in_channels,
@@ -201,7 +101,7 @@ class Waveunet(nn.Module):
         
         # If enc skip model, store input autoencoder
         if self.model == Model.waveunet_enc_skip:
-            self.skip_encoders.append(SkipEncoding(W=self.channel))
+            self.skip_encoders.append(modules.SkipEncoding(W=self.channel))
         
         last_conv_in = self.W if (self.model == Model.waveunet_no_skip) else self.W + self.channel
         self.dec_conv.append(nn.Conv1d(in_channels=last_conv_in,out_channels=self.channel,kernel_size=1,padding=0,stride=1))

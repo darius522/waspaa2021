@@ -48,7 +48,7 @@ parser.add_argument('--output', type=str, default="output",
 parser.add_argument('--epochs', type=int, default=300)
 parser.add_argument('--num-its', type=int, default=10)
 parser.add_argument('--batch-size', type=int, default=32)
-parser.add_argument('--lr', type=float, default=0.001,
+parser.add_argument('--lr', type=float, default=0.00001,
                     help='learning rate, defaults to 1e-4')
 parser.add_argument('--patience', type=int, default=140,
                     help='maximum number of epochs to train (default: 140)')
@@ -76,7 +76,7 @@ parser.add_argument('--nb-workers', type=int, default=0,
 # Misc Parameters
 parser.add_argument('--quiet', action='store_true', default=False,
                     help='less verbose during training')
-parser.add_argument('--device', action='store_true', default='cuda:6',
+parser.add_argument('--device', action='store_true', default='cuda:7',
                     help='cpu or cuda')
 
 args, _ = parser.parse_known_args()
@@ -115,9 +115,8 @@ def train(args, model, device, train_sampler, optimizer, writer, epoch):
             optimizer.step()
             losses.update(loss.item(), x.size(1))
 
-
-    writer.add_audio("train_x", torch.mean(x, 0), epoch, sample_rate=args.sample_rate)
-    writer.add_audio("train_yhat", torch.mean(y_hat, 0), epoch, sample_rate=args.sample_rate)
+    writer.add_audio("train_x", torch.mean(x[0,:,:], 0), epoch, sample_rate=args.sample_rate)
+    writer.add_audio("train_yhat", torch.mean(y_hat[0,:,:], 0), epoch, sample_rate=args.sample_rate)
     return losses.avg
 
 def valid(args, model, device, valid_sampler, writer, epoch):
@@ -130,8 +129,8 @@ def valid(args, model, device, valid_sampler, writer, epoch):
             loss = torch.nn.functional.mse_loss(y_hat, x)
             losses.update(loss.item(), x.size(1))
 
-        writer.add_audio("valid_x", torch.mean(x, 0), epoch, sample_rate=args.sample_rate)
-        writer.add_audio("valid_yhat", torch.mean(y_hat, 0), epoch, sample_rate=args.sample_rate)
+        writer.add_audio("valid_x", torch.mean(x[0,:,:], 0), epoch, sample_rate=args.sample_rate)
+        writer.add_audio("valid_yhat", torch.mean(y_hat[0,:,:], 0), epoch, sample_rate=args.sample_rate)
         return losses.avg
 
 use_cuda = torch.cuda.is_available()
@@ -181,16 +180,15 @@ writer = SummaryWriter(log_dir)
 
 optimizer = torch.optim.Adam(
     model.parameters(),
-    lr=args.lr,
-    weight_decay=args.weight_decay
+    lr=args.lr
 )
 
-scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-    optimizer,
-    factor=args.lr_decay_gamma,
-    patience=args.lr_decay_patience,
-    cooldown=10
-)
+# scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+#     optimizer,
+#     factor=args.lr_decay_gamma,
+#     patience=args.lr_decay_patience,
+#     cooldown=10
+# )
 
 es = utils.EarlyStopping(patience=args.patience)
 
@@ -211,7 +209,7 @@ for epoch in t:
 
     writer.add_scalar("lr", optimizer.param_groups[0]["lr"], epoch)
     writer.add_scalar("train_loss", train_loss, epoch)
-    writer.add_scalar("valiid_loss", valid_loss, epoch)
+    writer.add_scalar("valid_loss", valid_loss, epoch)
 
     t.set_postfix(
         train_loss=train_loss, val_loss=valid_loss
