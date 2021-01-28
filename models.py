@@ -2,6 +2,7 @@ from torch.nn import BatchNorm1d, Parameter, Conv1d, ConvTranspose1d
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from utils import get_uniform_distribution
 
 import modules
 
@@ -11,9 +12,7 @@ class Model(Enum):
     waveunet_no_skip = 1
     waveunet_skip = 2
     waveunet_enc_skip = 3
-    waveunet_enc_skip_quant = 4
      
-
 class Waveunet(nn.Module):
 
     def __init__(self,
@@ -39,6 +38,7 @@ class Waveunet(nn.Module):
         self.skip          = []
         self.dec_num_filt  = []
         self.W             = W
+        self.H             = H
         self.channel       = n_ch
         self.kernel_size_down = kernel_size_down
         self.kernel_size_up   = kernel_size_up
@@ -49,6 +49,7 @@ class Waveunet(nn.Module):
         self.tanh  = nn.Tanh()
         self.ds    = modules.Downsample()
         self.us    = nn.Upsample(scale_factor=2, mode='linear',align_corners=True)
+        self.quant = None
 
         # Encoding Path
         for layer in range(num_layers):
@@ -61,19 +62,30 @@ class Waveunet(nn.Module):
                 out_channels=self.out_channels,
                 kernel_size=self.kernel_size_down,
                 padding=(self.kernel_size_down // 2),
-                stride=self.stride))
+                stride=self.stride)
+                )
             
             self.bn_enc.append(BatchNorm1d(self.out_channels))
             
             self.dec_num_filt.append(self.out_channels)
 
         # Bottleneck
+        bottleneck_shape = (int(self.W * (self.num_layers + 1)), int(self.H / (2 ** self.num_layers)))
+        self.quant = modules.ScalarSoftmaxQuantization(
+            alpha = 0.5,
+            bins = get_uniform_distribution(bottleneck_shape),
+            is_quan_on = True,
+            the_share = True,
+            code_length = bottleneck_shape[1],
+            num_kmean_kernels = bottleneck_shape[0]
+        )
         self.conv_bottleneck = Conv1d(
             in_channels=self.out_channels,
             out_channels=self.out_channels+self.W,
             kernel_size=self.kernel_size_up,
             padding=(self.kernel_size_up // 2),
-            stride=self.stride)
+            stride=self.stride
+            )
 
         self.bn_enc.append(BatchNorm1d(self.out_channels+self.W))
 
@@ -95,7 +107,8 @@ class Waveunet(nn.Module):
                 out_channels=self.out_channels,
                 kernel_size=self.kernel_size_up,
                 padding=(self.kernel_size_up // 2),
-                stride=self.stride))
+                stride=self.stride)
+                )
             
             self.bn_dec.append(BatchNorm1d(self.out_channels))
         
@@ -104,7 +117,13 @@ class Waveunet(nn.Module):
             self.skip_encoders.append(modules.SkipEncoding(W=self.channel))
         
         last_conv_in = self.W if (self.model == Model.waveunet_no_skip) else self.W + self.channel
-        self.dec_conv.append(nn.Conv1d(in_channels=last_conv_in,out_channels=self.channel,kernel_size=1,padding=0,stride=1))
+        self.dec_conv.append(nn.Conv1d(
+            in_channels=last_conv_in,
+            out_channels=self.channel,
+            kernel_size=1,
+            padding=0,
+            stride=1)
+            )
 
     def forward(self,x):
         """
@@ -138,10 +157,12 @@ class Waveunet(nn.Module):
             # Upsample and Concatenate
             x = self.us(x)
 
-            # If model uses skip connection (either quant or identity)
+            # If model uses skip connection (either encoded or identity)
             if not self.model == Model.waveunet_no_skip:
+                # Identity skip
                 if self.model == Model.waveunet_skip:
                     skip_layer = self.skip[-layer-1]
+                # Encoded skip
                 elif self.model == Model.waveunet_enc_skip:
                     skip_layer = self.skip_encoders[layer](self.skip[-layer-1])
 

@@ -5,8 +5,13 @@ import numpy as np
 import csv
 import json
 from matplotlib import pyplot as plt
+import torch.nn as nn
 
 from scipy.interpolate import interp1d
+
+def get_uniform_distribution(shape):
+    t = torch.empty(shape)
+    return nn.init.uniform_(t, a=-1.0, b=1.0)
 
 def smooth(scalars, weight):  # Weight between 0 and 1
     last = scalars[0]  # First value in the plot (first timestep)

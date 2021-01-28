@@ -106,7 +106,7 @@ class SkipEncoding(nn.Module):
 
         return x 
 
-def ScalarSoftmaxQuantization(nn.Module):
+class ScalarSoftmaxQuantization(nn.Module):
     def __init__(self,         
         alpha,
         bins, # Quantization bins
@@ -142,7 +142,7 @@ def ScalarSoftmaxQuantization(nn.Module):
         print('soft_assignment', soft_assignment.shape)  # lpc <unknown>
 
         # If training, soft assignment, else hard
-        soft_assignment = soft_assignment if the_share else hard_assignment
+        soft_assignment = soft_assignment if self.training else hard_assignment
 
         bit_code = torch.reshape(torch.matmul(soft_assignment, torch.unsqueeze(bins, 1)), (-1, bottle_neck_size, 1))
         # is_quan_on = (is_quan_on==1)

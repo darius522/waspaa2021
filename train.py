@@ -37,7 +37,7 @@ experiment_id = np.random.randint(0,1000000)
 parser = argparse.ArgumentParser(description='Trainer')
 
 parser.add_argument('--experiment-id', type=str, default=str(experiment_id))
-parser.add_argument('--model', type=str, default="waveunet_skip")
+parser.add_argument('--model', type=str, default="waveunet_no_skip")
 
 # Dataset paramaters
 parser.add_argument('--root', type=str, default=rootPath, help='root path of dataset')
@@ -203,7 +203,7 @@ for epoch in t:
     end = time.time()
     train_loss = train(args, model, device, train_sampler, optimizer, writer, epoch)
     valid_loss = valid(args, model, device, valid_sampler, writer, epoch)
-    scheduler.step(valid_loss)
+    #scheduler.step(valid_loss)
     train_losses.append(train_loss)
     valid_losses.append(valid_loss)
 
@@ -224,8 +224,8 @@ for epoch in t:
             'epoch': epoch + 1,
             'state_dict': model.state_dict(),
             'best_loss': es.best,
-            'optimizer': optimizer.state_dict(),
-            'scheduler': scheduler.state_dict()
+            'optimizer': optimizer.state_dict()
+            #'scheduler': scheduler.state_dict()
         },
         is_best=valid_loss == es.best,
         path=target_path,
