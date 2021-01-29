@@ -17,23 +17,33 @@ import io
 import math
 from matplotlib import pyplot as plt
 
+from models import Model
+
+model_dic = {
+    'waveunet_no_skip': Model.waveunet_no_skip,
+    'waveunet_skip': Model.waveunet_skip,
+    'waveunet_enc_skip': Model.waveunet_enc_skip
+}
+
 parser = argparse.ArgumentParser(description='Trainer')
 
 parser.add_argument('--main-dir', type=str, default='output')
-parser.add_argument('--model-name', type=str, default='waveunet')
-parser.add_argument('--model-id', type=str, default='517737')
+parser.add_argument('--model-name', type=str, default='waveunet_no_skip')
+parser.add_argument('--model-id', type=str, default='949961')
 # Model Parameters
 parser.add_argument('--seq-dur', type=float, default=16384)
 parser.add_argument('--nb-channels', type=int, default=1)
-parser.add_argument('--overlap', type=int, default=64)
+parser.add_argument('--overlap', type=int, default=12000)
 parser.add_argument('--window', type=str, default='hann')
+parser.add_argument('--device', type=str, default='cuda:6')
 
 args, _ = parser.parse_known_args()
 
 def load_model(
     model_name=args.model_name, 
     model_id=args.model_id, 
-    device='cuda:6'
+    device=args.device,
+    model_dic=model_dic
 ):
 
     model_path = os.path.join(args.main_dir,model_name+'/'+model_id)
@@ -48,7 +58,8 @@ def load_model(
     )
 
     model = models.Waveunet(
-        n_ch=results['args']['nb_channels']
+        n_ch=results['args']['nb_channels'],
+        model=model_dic[results['args']['model']]
     )
 
     model.load_state_dict(state)
@@ -108,7 +119,7 @@ def inference(
     audio,
     model_name=args.model_name, 
     model_id=args.model_id, 
-    device='cuda:6'
+    device=args.device
 ):
     # convert numpy audio to torch
     audio_torch = torch.tensor(audio.T[None, ...]).float().to(device)
@@ -123,12 +134,13 @@ def inference(
     x = x.to(device)
     y_tmp = model(x).to(device)
 
-    y = overlap_add(y_tmp,timestamps,device=device)
+    y     = overlap_add(y_tmp,timestamps,device=device)
+    x_new = overlap_add(x,timestamps,device=device)
 
-    return y
+    return x_new, y
 
 use_cuda = torch.cuda.is_available()
-device = torch.device("cuda:6" if use_cuda else "cpu")
+device = torch.device(args.device if use_cuda else "cpu")
 print("Using GPU:", use_cuda)
 
 with open(os.path.join(args.main_dir,args.model_name+'/'+args.model_id+'/'+'test_set.csv'), newline='') as f:
@@ -141,9 +153,9 @@ audio = utils.torchaudio_loader(testPaths[0])
 if args.nb_channels == 1:
     audio = torch.mean(audio, axis=0, keepdim=True)
 
-y = inference(audio=audio,device=device)
+x, y = inference(audio=audio,device=device)
 
 print("min: "+ str(torch.min(y)))
 print("max: "+ str(torch.max(y)))
-utils.soundfile_writer('./test_x.wav', audio.cpu().permute(1,0).detach().numpy(), 44100)
-utils.soundfile_writer('./test_y.wav', y.cpu().permute(1,0).detach().numpy(), 44100)
+utils.soundfile_writer('./test_x_'+str(args.overlap)+'.wav', x.cpu().permute(1,0).detach().numpy(), 44100)
+utils.soundfile_writer('./test_y_'+str(args.overlap)+'.wav', y.cpu().permute(1,0).detach().numpy(), 44100)

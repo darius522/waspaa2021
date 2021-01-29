@@ -76,7 +76,7 @@ parser.add_argument('--nb-workers', type=int, default=0,
 # Misc Parameters
 parser.add_argument('--quiet', action='store_true', default=False,
                     help='less verbose during training')
-parser.add_argument('--device', action='store_true', default='cuda:7',
+parser.add_argument('--device', action='store_true', default='cpu',
                     help='cpu or cuda')
 
 args, _ = parser.parse_known_args()

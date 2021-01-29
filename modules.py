@@ -128,25 +128,24 @@ class ScalarSoftmaxQuantization(nn.Module):
 
         floating_code = x
 
-        bins_expand = torch.unsqueeze(bins, 1)
-        bins_expand = torch.reshape(bins_expand, (1, 1, -1))
+        bins_expand = torch.reshape(self.bins, (1, 1, -1))
         dist = torch.abs(floating_code - bins_expand)
         bottle_neck_size = floating_code.size()[1]
         print(bins_expand.size(), floating_code.size(), dist.size())
-        soft_assignment = nn.softmax(torch.multiply(alpha, dist))  # frame_length * 256
+        soft_assignment = nn.Softmax()(self.alpha * dist)  # frame_length * 256
         soft_assignment_3d = soft_assignment
         # input()
-        hard_assignment = torch.reshape(F.one_hot(nn.topk(soft_assignment).indices, num_kmean_kernels),
-                                    (-1, code_length, num_kmean_kernels))
-        print('hard_assignment', hard_assignment.shape)  # lpc ? 16 64
-        print('soft_assignment', soft_assignment.shape)  # lpc <unknown>
+        hard_assignment = torch.reshape(F.one_hot(torch.topk(soft_assignment).indices, self.num_kmean_kernels),
+                                    (-1, self.code_length, self.num_kmean_kernels))
+        print('hard_assignment', hard_assignment.size())  # lpc ? 16 64
+        print('soft_assignment', soft_assignment.size())  # lpc <unknown>
 
         # If training, soft assignment, else hard
         soft_assignment = soft_assignment if self.training else hard_assignment
 
-        bit_code = torch.reshape(torch.matmul(soft_assignment, torch.unsqueeze(bins, 1)), (-1, bottle_neck_size, 1))
+        bit_code = torch.reshape(torch.matmul(soft_assignment, torch.unsqueeze(self.bins, 1)), (-1, bottle_neck_size, 1))
         # is_quan_on = (is_quan_on==1)
-        bit_code = ((1 - is_quan_on) * floating_code).float32() + (is_quan_on * bit_code).float32()
+        bit_code = ((1 - self.is_quan_on) * floating_code).float32() + (self.is_quan_on * bit_code).float32()
         bit_code =  torch.reshape(bit_code, (-1, bottle_neck_size, 1))
         
         return soft_assignment_3d, bit_code     

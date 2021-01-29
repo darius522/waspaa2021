@@ -73,7 +73,7 @@ class Waveunet(nn.Module):
         bottleneck_shape = (int(self.W * (self.num_layers + 1)), int(self.H / (2 ** self.num_layers)))
         self.quant = modules.ScalarSoftmaxQuantization(
             alpha = 0.5,
-            bins = get_uniform_distribution(bottleneck_shape),
+            bins = get_uniform_distribution(bottleneck_shape[1]),
             is_quan_on = True,
             the_share = True,
             code_length = bottleneck_shape[1],
@@ -149,6 +149,7 @@ class Waveunet(nn.Module):
             x = self.ds(x)
 
         # Bottleneck
+        x, _ = self.quant(x)
         x = self.conv_bottleneck(x)
         x = self.bn_enc[layer+1](x)
 
