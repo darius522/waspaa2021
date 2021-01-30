@@ -176,7 +176,7 @@ elif args.model == 'unet':
     model = models.U_Net(H=60, Hc=4, Hskip=4, W1=32, W2=5).to(device)
 
 writer = SummaryWriter(log_dir)
-#summary(model,(args.nb_channels,args.seq_dur),device='cpu')
+summary(model,(args.nb_channels,args.seq_dur),device='cpu')
 
 optimizer = torch.optim.Adam(
     model.parameters(),

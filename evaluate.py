@@ -18,6 +18,7 @@ import math
 from matplotlib import pyplot as plt
 
 from models import Model
+from utils import normalize_audio
 
 model_dic = {
     'waveunet_no_skip': Model.waveunet_no_skip,
@@ -28,14 +29,14 @@ model_dic = {
 parser = argparse.ArgumentParser(description='Trainer')
 
 parser.add_argument('--main-dir', type=str, default='output')
-parser.add_argument('--model-name', type=str, default='waveunet_no_skip')
-parser.add_argument('--model-id', type=str, default='949961')
+parser.add_argument('--model-name', type=str, default='waveunet_skip')
+parser.add_argument('--model-id', type=str, default='909074')
 # Model Parameters
 parser.add_argument('--seq-dur', type=float, default=16384)
 parser.add_argument('--nb-channels', type=int, default=1)
-parser.add_argument('--overlap', type=int, default=12000)
+parser.add_argument('--overlap', type=int, default=64)
 parser.add_argument('--window', type=str, default='hann')
-parser.add_argument('--device', type=str, default='cuda:6')
+parser.add_argument('--device', type=str, default='cpu')
 
 args, _ = parser.parse_known_args()
 
@@ -87,10 +88,10 @@ def prepare_audio(audio):
         timestamps[i,1] = end
 
         if audio_len > end:
-            prep_audio[i,:,:] = audio[:,start:end]#torch.narrow(audio,1,start,args.seq_dur)
+            prep_audio[i,:,:] = torch.clone(audio[:,start:end])#torch.narrow(audio,1,start,args.seq_dur)
         else:
             last = args.seq_dur - (end - audio_len)
-            prep_audio[i,:,:last] = audio[:,start:start+last]#torch.narrow(audio,1,start,last)
+            prep_audio[i,:,:last] = torch.clone(audio[:,start:start+last])#torch.narrow(audio,1,start,last)
             prep_audio[i,:,last:] = 0
     
     return prep_audio, timestamps
@@ -98,19 +99,21 @@ def prepare_audio(audio):
 def overlap_add(audio, timestamps, device):
     num_frames = audio.size()[0]
     target_len = num_frames * (args.seq_dur - args.overlap) + args.overlap
-    y = torch.empty(args.nb_channels, target_len).to(device)
+    y = torch.empty(args.nb_channels, target_len)
 
-    hann = torch.hann_window(args.overlap*2, periodic=True).to(device)
+    hann = torch.hann_window(args.overlap*2, periodic=True)
 
     for i in range(num_frames):
 
         start = int(timestamps[i,0].item())
         end   = int(timestamps[i,1].item())
 
-        # for j in range(args.nb_channels):
-        #     audio[i,j,:args.overlap] *= hann[:args.overlap]
-        #     audio[i,j,-args.overlap:] *= hann[args.overlap:]
-        y[:,start:end] += audio[i,:,:]
+        chunk = torch.clone(audio[i,:,:])
+        for j in range(args.nb_channels):
+            chunk[j,:args.overlap]  *= hann[:args.overlap]
+            chunk[j,-args.overlap:] *= hann[args.overlap:]
+            
+        y[:,start:end] += chunk
 
     return y
         
@@ -121,8 +124,6 @@ def inference(
     model_id=args.model_id, 
     device=args.device
 ):
-    # convert numpy audio to torch
-    audio_torch = torch.tensor(audio.T[None, ...]).float().to(device)
 
     model = load_model(
         model_name=model_name,
@@ -131,12 +132,21 @@ def inference(
         )
 
     x, timestamps = prepare_audio(audio)
-    x = x.to(device)
-    y_tmp = model(x).to(device)
-
-    y     = overlap_add(y_tmp,timestamps,device=device)
     x_new = overlap_add(x,timestamps,device=device)
 
+    y_tmp = model(x)
+
+    y = overlap_add(y_tmp,timestamps,device=device)
+
+    # from matplotlib import pyplot as plt
+    # plt.figure()
+    # _ = plt.plot(x_new)
+    # plt.savefig('./x.png')
+    # plt.clf()
+    # plt.figure()
+    # _ = plt.plot(y)
+    # plt.savefig('./y.png')
+    utils.soundfile_writer('./y'+str(args.overlap)+'.wav', y.cpu().permute(1,0).detach().numpy(), 44100)
     return x_new, y
 
 use_cuda = torch.cuda.is_available()
@@ -149,13 +159,15 @@ with open(os.path.join(args.main_dir,args.model_name+'/'+args.model_id+'/'+'test
 
 testPaths = [path for sublist in testPaths for path in sublist]
 
-audio = utils.torchaudio_loader(testPaths[0])
+audio = utils.torchaudio_loader(testPaths[1])
 if args.nb_channels == 1:
     audio = torch.mean(audio, axis=0, keepdim=True)
 
 x, y = inference(audio=audio,device=device)
 
+#y = normalize_audio(torch.min(x),torch.max(x),y)
+print("min: "+ str(torch.min(x)))
+print("max: "+ str(torch.max(x)))
 print("min: "+ str(torch.min(y)))
 print("max: "+ str(torch.max(y)))
-utils.soundfile_writer('./test_x_'+str(args.overlap)+'.wav', x.cpu().permute(1,0).detach().numpy(), 44100)
-utils.soundfile_writer('./test_y_'+str(args.overlap)+'.wav', y.cpu().permute(1,0).detach().numpy(), 44100)
+utils.soundfile_writer('./y_broken'+str(args.overlap)+'.wav', y.cpu().permute(1,0).detach().numpy(), 44100)

@@ -149,7 +149,7 @@ class Waveunet(nn.Module):
             x = self.ds(x)
 
         # Bottleneck
-        x, _ = self.quant(x)
+        #x, _ = self.quant(x)
         x = self.conv_bottleneck(x)
         x = self.bn_enc[layer+1](x)
 

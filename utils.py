@@ -9,6 +9,9 @@ import torch.nn as nn
 
 from scipy.interpolate import interp1d
 
+def normalize_audio(min, max, audio):
+    return (max - min) * ((audio - torch.min(audio)) / (torch.max(audio) - torch.min(audio))) + min
+
 def get_uniform_distribution(shape):
     t = torch.empty(shape)
     return nn.init.uniform_(t, a=-1.0, b=1.0)
@@ -82,7 +85,7 @@ def get_info_backend():
 
 def soundfile_writer(path, audio, sr):
     import soundfile
-    soundfile.write(path, audio, sr, 'PCM_24')
+    soundfile.write(path, audio, sr)
 
 def soundfile_info(path):
     import soundfile

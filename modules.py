@@ -135,7 +135,8 @@ class ScalarSoftmaxQuantization(nn.Module):
         soft_assignment = nn.Softmax()(self.alpha * dist)  # frame_length * 256
         soft_assignment_3d = soft_assignment
         # input()
-        hard_assignment = torch.reshape(F.one_hot(torch.topk(soft_assignment).indices, self.num_kmean_kernels),
+        max_prob_bin = torch.topk(soft_assignment,1).indices
+        hard_assignment = torch.reshape(F.one_hot(max_prob_bin, self.num_kmean_kernels),
                                     (-1, self.code_length, self.num_kmean_kernels))
         print('hard_assignment', hard_assignment.size())  # lpc ? 16 64
         print('soft_assignment', soft_assignment.size())  # lpc <unknown>
