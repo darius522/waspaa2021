@@ -97,7 +97,10 @@ def prepare_audio(audio):
     return prep_audio, timestamps
 
 def overlap_add(audio, timestamps, device):
-    num_frames = audio.size()[0]
+
+    audio_ = torch.clone(audio)
+
+    num_frames = audio_.size()[0]
     target_len = num_frames * (args.seq_dur - args.overlap) + args.overlap
     y = torch.empty(args.nb_channels, target_len)
 
@@ -108,7 +111,7 @@ def overlap_add(audio, timestamps, device):
         start = int(timestamps[i,0].item())
         end   = int(timestamps[i,1].item())
 
-        chunk = torch.clone(audio[i,:,:])
+        chunk = torch.clone(audio_[i,:,:])
         for j in range(args.nb_channels):
             chunk[j,:args.overlap]  *= hann[:args.overlap]
             chunk[j,-args.overlap:] *= hann[args.overlap:]
@@ -138,16 +141,23 @@ def inference(
 
     y = overlap_add(y_tmp,timestamps,device=device)
 
-    # from matplotlib import pyplot as plt
     # plt.figure()
-    # _ = plt.plot(x_new)
-    # plt.savefig('./x.png')
-    # plt.clf()
-    # plt.figure()
-    # _ = plt.plot(y)
+    # _ = plt.plot(y.cpu().permute(1,0).detach().numpy())
+    # plt.draw()
     # plt.savefig('./y.png')
+    # plt.close()
+
+    # plt.figure()
+    # _ = plt.plot(x_new.cpu().permute(1,0).detach().numpy())
+    # plt.draw()
+    # plt.savefig('./x.png')
+    # plt.close()
+
+    print(y.type())
+    utils.soundfile_writer('./x'+str(args.overlap)+'.wav', x_new.cpu().permute(1,0).detach().numpy(), 44100)
     utils.soundfile_writer('./y'+str(args.overlap)+'.wav', y.cpu().permute(1,0).detach().numpy(), 44100)
-    return x_new, y
+
+    return x, y
 
 use_cuda = torch.cuda.is_available()
 device = torch.device(args.device if use_cuda else "cpu")
@@ -164,10 +174,10 @@ if args.nb_channels == 1:
     audio = torch.mean(audio, axis=0, keepdim=True)
 
 x, y = inference(audio=audio,device=device)
-
+# plt.figure()
+# _ = plt.plot(y.cpu().permute(1,0).detach().numpy())
+# plt.draw()
+# plt.savefig('./y_after.png')
+# plt.close()
 #y = normalize_audio(torch.min(x),torch.max(x),y)
-print("min: "+ str(torch.min(x)))
-print("max: "+ str(torch.max(x)))
-print("min: "+ str(torch.min(y)))
-print("max: "+ str(torch.max(y)))
-utils.soundfile_writer('./y_broken'+str(args.overlap)+'.wav', y.cpu().permute(1,0).detach().numpy(), 44100)
+#utils.soundfile_writer('./y_clean'+str(args.overlap)+'.wav', y.cpu().permute(1,0).detach().numpy(), 44100)

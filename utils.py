@@ -12,8 +12,8 @@ from scipy.interpolate import interp1d
 def normalize_audio(min, max, audio):
     return (max - min) * ((audio - torch.min(audio)) / (torch.max(audio) - torch.min(audio))) + min
 
-def get_uniform_distribution(shape):
-    t = torch.empty(shape)
+def get_uniform_distribution(num_bins):
+    t = torch.empty(num_bins)
     return nn.init.uniform_(t, a=-1.0, b=1.0)
 
 def smooth(scalars, weight):  # Weight between 0 and 1

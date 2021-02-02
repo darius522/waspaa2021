@@ -16,7 +16,7 @@ class Model(Enum):
 class Waveunet(nn.Module):
 
     def __init__(self,
-        W = 24,
+        W = 3,
         H = 16384,
         n_ch = 1,
         num_layers = 6,
@@ -24,7 +24,8 @@ class Waveunet(nn.Module):
         kernel_size_up = 5,
         output_filter_size = 1,
         stride = 1,
-        model = Model.waveunet_skip
+        model = Model.waveunet_skip,
+        quant_num_bins = 2**2
     ):
 
         super(Waveunet, self).__init__()
@@ -44,6 +45,7 @@ class Waveunet(nn.Module):
         self.kernel_size_up   = kernel_size_up
         self.stride           = stride
         self.model            = model
+        self.quant_num_bins   = quant_num_bins
 
         self.leaky = nn.LeakyReLU(negative_slope=0.2)
         self.tanh  = nn.Tanh()
@@ -70,15 +72,6 @@ class Waveunet(nn.Module):
             self.dec_num_filt.append(self.out_channels)
 
         # Bottleneck
-        bottleneck_shape = (int(self.W * (self.num_layers + 1)), int(self.H / (2 ** self.num_layers)))
-        self.quant = modules.ScalarSoftmaxQuantization(
-            alpha = 0.5,
-            bins = get_uniform_distribution(bottleneck_shape[1]),
-            is_quan_on = True,
-            the_share = True,
-            code_length = bottleneck_shape[1],
-            num_kmean_kernels = bottleneck_shape[0]
-        )
         self.conv_bottleneck = Conv1d(
             in_channels=self.out_channels,
             out_channels=self.out_channels+self.W,
@@ -88,6 +81,17 @@ class Waveunet(nn.Module):
             )
 
         self.bn_enc.append(BatchNorm1d(self.out_channels+self.W))
+
+        bottleneck_shape = (int(self.W * (self.num_layers + 1)), int(self.H / (2 ** self.num_layers)))
+        self.quant = modules.ScalarSoftmaxQuantization(
+            alpha = -50,
+            bins = get_uniform_distribution(num_bins=self.quant_num_bins),
+            is_quan_on = True,
+            the_share = True,
+            code_length = bottleneck_shape[1],
+            num_kmean_kernels = self.quant_num_bins,
+            feat_maps = bottleneck_shape[0]
+        )
 
         # Decoding Path
         for layer in range(num_layers):
@@ -149,9 +153,9 @@ class Waveunet(nn.Module):
             x = self.ds(x)
 
         # Bottleneck
-        #x, _ = self.quant(x)
         x = self.conv_bottleneck(x)
         x = self.bn_enc[layer+1](x)
+        x = self.quant(x)
 
         # Decoding Path
         for layer in range(self.num_layers):

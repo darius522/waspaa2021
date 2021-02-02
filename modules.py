@@ -113,40 +113,53 @@ class ScalarSoftmaxQuantization(nn.Module):
         is_quan_on, # Wether quant is on or not
         the_share, # Wether training or testing
         code_length,
-        num_kmean_kernels
+        num_kmean_kernels,
+        feat_maps
     ):
         super(ScalarSoftmaxQuantization, self).__init__()
     
-        self.alpha = alpha
+        self.alpha = -50 #tbd
         self.bins = bins
         self.is_quan_on = is_quan_on
         self.the_share = the_share
         self.code_length = code_length
+        self.feat_maps   = feat_maps
         self.num_kmean_kernels = num_kmean_kernels
     
     def forward(self, x):
 
-        floating_code = x
+        '''
+        x = [batch_size, feature_maps, floating_code] // [-1, 21, 256]
+        bins = [quant_num_bins] // [4]
 
-        bins_expand = torch.reshape(self.bins, (1, 1, -1))
-        dist = torch.abs(floating_code - bins_expand)
+        output = [-1, 21, 256]
+        '''
+
+        input_size = x.size()
+
+        x = torch.unsqueeze(x, len(x.size()))
+        floating_code = x.expand(input_size[0],self.feat_maps,self.code_length,self.num_kmean_kernels)
+
+        bins_expand = torch.reshape(self.bins, (1, 1, 1, -1))
+        dist = torch.abs(floating_code - bins_expand) # [-1, 21, 256, 4]
+        # print("Input: "+str(floating_code[0,0,200,:]))
+        # print("Bins: "+str(bins_expand[0,0,0,:]))
+        # print("Dist: "+str(dist[0,0,200,:]))
         bottle_neck_size = floating_code.size()[1]
-        print(bins_expand.size(), floating_code.size(), dist.size())
-        soft_assignment = nn.Softmax()(self.alpha * dist)  # frame_length * 256
+        soft_assignment = nn.Softmax(len(dist.size())-1)(torch.mul(self.alpha, dist))
         soft_assignment_3d = soft_assignment
-        # input()
+        # print("SA:"+str(soft_assignment[0,0,200,:]))
         max_prob_bin = torch.topk(soft_assignment,1).indices
+
+        # print("Max Prob", max_prob_bin[0,0,200,:])
         hard_assignment = torch.reshape(F.one_hot(max_prob_bin, self.num_kmean_kernels),
-                                    (-1, self.code_length, self.num_kmean_kernels))
-        print('hard_assignment', hard_assignment.size())  # lpc ? 16 64
-        print('soft_assignment', soft_assignment.size())  # lpc <unknown>
+                                     (input_size[0], self.feat_maps, self.code_length, self.num_kmean_kernels))
+        # print('hard_assignment', hard_assignment[0,0,200,:])
+        # print('soft_assignment', soft_assignment.size())
 
         # If training, soft assignment, else hard
-        soft_assignment = soft_assignment if self.training else hard_assignment
+        assignment = soft_assignment if self.training else hard_assignment
 
-        bit_code = torch.reshape(torch.matmul(soft_assignment, torch.unsqueeze(self.bins, 1)), (-1, bottle_neck_size, 1))
-        # is_quan_on = (is_quan_on==1)
-        bit_code = ((1 - self.is_quan_on) * floating_code).float32() + (self.is_quan_on * bit_code).float32()
-        bit_code =  torch.reshape(bit_code, (-1, bottle_neck_size, 1))
+        bit_code = torch.matmul(assignment,self.bins)
         
-        return soft_assignment_3d, bit_code     
+        return bit_code     
