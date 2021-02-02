@@ -110,18 +110,15 @@ class ScalarSoftmaxQuantization(nn.Module):
     def __init__(self,         
         alpha,
         bins, # Quantization bins
-        is_quan_on, # Wether quant is on or not
-        the_share, # Wether training or testing
         code_length,
         num_kmean_kernels,
         feat_maps
     ):
         super(ScalarSoftmaxQuantization, self).__init__()
-    
+
         self.alpha = -50 #tbd
-        self.bins = bins
-        self.is_quan_on = is_quan_on
-        self.the_share = the_share
+        self.bins_uniform = torch.rand(num_kmean_kernels,requires_grad=True) * 2 - 1
+        self.register_parameter(name='bins', param=(torch.nn.Parameter(self.bins_uniform, requires_grad=True)))
         self.code_length = code_length
         self.feat_maps   = feat_maps
         self.num_kmean_kernels = num_kmean_kernels
@@ -154,6 +151,7 @@ class ScalarSoftmaxQuantization(nn.Module):
         # print("Max Prob", max_prob_bin[0,0,200,:])
         hard_assignment = torch.reshape(F.one_hot(max_prob_bin, self.num_kmean_kernels),
                                      (input_size[0], self.feat_maps, self.code_length, self.num_kmean_kernels))
+        hard_assignment = hard_assignment.type(torch.float)
         # print('hard_assignment', hard_assignment[0,0,200,:])
         # print('soft_assignment', soft_assignment.size())
 

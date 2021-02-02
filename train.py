@@ -11,7 +11,7 @@ import torch.nn.functional as F
 from torchvision import datasets, transforms
 from torch.autograd import Variable
 from torchsummary import summary
-from torch.utils.tensorboard import SummaryWriter
+from tensorboardX import SummaryWriter
 import _pickle as pickle
 from torch.utils.data import TensorDataset, DataLoader
 import torchaudio
@@ -27,9 +27,12 @@ import soundfile as sf
 import logging
 
 import argparse
+
+# Local modules
 import models
 import data
 import utils
+import evaluate
 
 rootPath='../../../media/sdb1/Data/ETRI_Music/'
 experiment_id = np.random.randint(0,1000000)
@@ -46,7 +49,7 @@ parser.add_argument('--output', type=str, default="output",
 
 # Trainig Parameters
 parser.add_argument('--epochs', type=int, default=300)
-parser.add_argument('--num-its', type=int, default=10)
+parser.add_argument('--num-its', type=int, default=1)
 parser.add_argument('--batch-size', type=int, default=32)
 parser.add_argument('--lr', type=float, default=0.00001,
                     help='learning rate, defaults to 1e-4')
@@ -76,7 +79,7 @@ parser.add_argument('--nb-workers', type=int, default=0,
 # Misc Parameters
 parser.add_argument('--quiet', action='store_true', default=False,
                     help='less verbose during training')
-parser.add_argument('--device', action='store_true', default='cpu',
+parser.add_argument('--device', action='store_true', default='cuda:6',
                     help='cpu or cuda')
 
 args, _ = parser.parse_known_args()
@@ -115,8 +118,6 @@ def train(args, model, device, train_sampler, optimizer, writer, epoch):
             optimizer.step()
             losses.update(loss.item(), x.size(1))
 
-    writer.add_audio("train_x", torch.mean(x[0,:,:], 0), epoch, sample_rate=args.sample_rate)
-    writer.add_audio("train_yhat", torch.mean(y_hat[0,:,:], 0), epoch, sample_rate=args.sample_rate)
     return losses.avg
 
 def valid(args, model, device, valid_sampler, writer, epoch):
@@ -129,8 +130,6 @@ def valid(args, model, device, valid_sampler, writer, epoch):
             loss = torch.nn.functional.mse_loss(y_hat, x)
             losses.update(loss.item(), x.size(1))
 
-        writer.add_audio("valid_x", torch.mean(x[0,:,:], 0), epoch, sample_rate=args.sample_rate)
-        writer.add_audio("valid_yhat", torch.mean(y_hat[0,:,:], 0), epoch, sample_rate=args.sample_rate)
         return losses.avg
 
 use_cuda = torch.cuda.is_available()
@@ -210,6 +209,7 @@ for epoch in t:
     writer.add_scalar("lr", optimizer.param_groups[0]["lr"], epoch)
     writer.add_scalar("train_loss", train_loss, epoch)
     writer.add_scalar("valid_loss", valid_loss, epoch)
+    writer.add_histogram('quantization bins', model.state_dict()['quant.bins'], epoch)
 
     t.set_postfix(
         train_loss=train_loss, val_loss=valid_loss
@@ -244,12 +244,17 @@ for epoch in t:
         'num_bad_epochs': es.num_bad_epochs
     }
 
+    # Post epoch business
     with open(Path(target_path,  args.experiment_id + '.json'), 'w') as outfile:
         outfile.write(json.dumps(params, indent=4, sort_keys=True))
 
     utils.plot_loss_to_png(os.path.join(target_path,  args.experiment_id + '.json'))
-
     train_times.append(time.time() - end)
+
+    # Save audio example every 10 epochs
+    x, y = evaluate.make_an_experiment(model_name=args.model, model_id=args.experiment_id)
+    writer.add_audio("x", x.permute(1,0), epoch, sample_rate=args.sample_rate)
+    writer.add_audio("y", y.permute(1,0), epoch, sample_rate=args.sample_rate)
 
     if stop:
         print("Apply Early Stopping")

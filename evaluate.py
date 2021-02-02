@@ -16,6 +16,7 @@ from contextlib import redirect_stderr
 import io
 import math
 from matplotlib import pyplot as plt
+import random
 
 from models import Model
 from utils import normalize_audio
@@ -141,43 +142,29 @@ def inference(
 
     y = overlap_add(y_tmp,timestamps,device=device)
 
-    # plt.figure()
-    # _ = plt.plot(y.cpu().permute(1,0).detach().numpy())
-    # plt.draw()
-    # plt.savefig('./y.png')
-    # plt.close()
+    # utils.soundfile_writer('./x'+str(args.overlap)+'.wav', x_new.cpu().permute(1,0).detach().numpy(), 44100)
+    # utils.soundfile_writer('./y'+str(args.overlap)+'.wav', y.cpu().permute(1,0).detach().numpy(), 44100)
 
-    # plt.figure()
-    # _ = plt.plot(x_new.cpu().permute(1,0).detach().numpy())
-    # plt.draw()
-    # plt.savefig('./x.png')
-    # plt.close()
+    return x_new, y
 
-    print(y.type())
-    utils.soundfile_writer('./x'+str(args.overlap)+'.wav', x_new.cpu().permute(1,0).detach().numpy(), 44100)
-    utils.soundfile_writer('./y'+str(args.overlap)+'.wav', y.cpu().permute(1,0).detach().numpy(), 44100)
+def make_an_experiment(model_name='',model_id=''):
+
+    use_cuda = torch.cuda.is_available()
+    device = torch.device(args.device if use_cuda else "cpu")
+    print("Using GPU:", use_cuda)
+
+    with open(os.path.join(args.main_dir,model_name+'/'+model_id+'/'+'test_set.csv'), newline='') as f:
+        reader = csv.reader(f)
+        testPaths = list(reader)
+
+    testPaths = [path for sublist in testPaths for path in sublist]
+
+    audio = utils.torchaudio_loader(testPaths[random.randint(0,len(testPaths)-1)])
+    if args.nb_channels == 1:
+        audio = torch.mean(audio, axis=0, keepdim=True)
+
+    x, y = inference(model_name=model_name,model_id=model_id,audio=audio,device=device)
+    x = normalize_audio(-1.0, 1.0, x)
+    y = normalize_audio(-1.0, 1.0, y)
 
     return x, y
-
-use_cuda = torch.cuda.is_available()
-device = torch.device(args.device if use_cuda else "cpu")
-print("Using GPU:", use_cuda)
-
-with open(os.path.join(args.main_dir,args.model_name+'/'+args.model_id+'/'+'test_set.csv'), newline='') as f:
-    reader = csv.reader(f)
-    testPaths = list(reader)
-
-testPaths = [path for sublist in testPaths for path in sublist]
-
-audio = utils.torchaudio_loader(testPaths[1])
-if args.nb_channels == 1:
-    audio = torch.mean(audio, axis=0, keepdim=True)
-
-x, y = inference(audio=audio,device=device)
-# plt.figure()
-# _ = plt.plot(y.cpu().permute(1,0).detach().numpy())
-# plt.draw()
-# plt.savefig('./y_after.png')
-# plt.close()
-#y = normalize_audio(torch.min(x),torch.max(x),y)
-#utils.soundfile_writer('./y_clean'+str(args.overlap)+'.wav', y.cpu().permute(1,0).detach().numpy(), 44100)

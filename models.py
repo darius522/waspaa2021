@@ -86,8 +86,6 @@ class Waveunet(nn.Module):
         self.quant = modules.ScalarSoftmaxQuantization(
             alpha = -50,
             bins = get_uniform_distribution(num_bins=self.quant_num_bins),
-            is_quan_on = True,
-            the_share = True,
             code_length = bottleneck_shape[1],
             num_kmean_kernels = self.quant_num_bins,
             feat_maps = bottleneck_shape[0]
