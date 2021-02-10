@@ -3,6 +3,7 @@ __*
 *.csv
 *.png
 *.wav
+*.pkf
 *.chkpnt
 .DS_Store
 App_data/*

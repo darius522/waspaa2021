@@ -2,30 +2,23 @@ from torch.nn import BatchNorm1d, Parameter, Conv1d, ConvTranspose1d
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from utils import get_uniform_distribution
+from utils import (get_uniform_distribution, Model)
 
 import modules
-
-from enum import Enum
-
-class Model(Enum):
-    waveunet_no_skip = 1
-    waveunet_skip = 2
-    waveunet_enc_skip = 3
      
 class Waveunet(nn.Module):
 
     def __init__(self,
-        W = 3,
+        W = 12,
         H = 16384,
         n_ch = 1,
-        num_layers = 6,
+        num_layers = 5,
         kernel_size_down = 15,
         kernel_size_up = 5,
         output_filter_size = 1,
         stride = 1,
         model = Model.waveunet_skip,
-        quant_num_bins = 2**2
+        quant_num_bins = 2**5,
     ):
 
         super(Waveunet, self).__init__()
@@ -45,13 +38,18 @@ class Waveunet(nn.Module):
         self.kernel_size_up   = kernel_size_up
         self.stride           = stride
         self.model            = model
-        self.quant_num_bins   = quant_num_bins
 
         self.leaky = nn.LeakyReLU(negative_slope=0.2)
         self.tanh  = nn.Tanh()
         self.ds    = modules.Downsample()
         self.us    = nn.Upsample(scale_factor=2, mode='linear',align_corners=True)
+
+        # Quant
         self.quant = None
+        self.quant_active = False
+        self.quant_num_bins = quant_num_bins
+        self.quant_alpha = -1.0
+        self.quant_bins = torch.rand(self.quant_num_bins, requires_grad=True) * (-1.6) + 0.8
 
         # Encoding Path
         for layer in range(num_layers):
@@ -84,8 +82,8 @@ class Waveunet(nn.Module):
 
         bottleneck_shape = (int(self.W * (self.num_layers + 1)), int(self.H / (2 ** self.num_layers)))
         self.quant = modules.ScalarSoftmaxQuantization(
-            alpha = -50,
-            bins = get_uniform_distribution(num_bins=self.quant_num_bins),
+            bins = self.quant_bins,
+            alpha = self.quant_alpha,
             code_length = bottleneck_shape[1],
             num_kmean_kernels = self.quant_num_bins,
             feat_maps = bottleneck_shape[0]
@@ -104,13 +102,13 @@ class Waveunet(nn.Module):
             if self.model == Model.waveunet_enc_skip:
                 self.skip_encoders.append(modules.SkipEncoding(W=self.dec_num_filt[-layer-1]))
 
-            self.dec_conv.append(nn.Conv1d(
+            self.dec_conv.append(nn.ConvTranspose1d(
                 in_channels=self.in_channels,
                 out_channels=self.out_channels,
                 kernel_size=self.kernel_size_up,
                 padding=(self.kernel_size_up // 2),
-                stride=self.stride)
-                )
+                stride=self.stride
+                ))
             
             self.bn_dec.append(BatchNorm1d(self.out_channels))
         
@@ -153,7 +151,10 @@ class Waveunet(nn.Module):
         # Bottleneck
         x = self.conv_bottleneck(x)
         x = self.bn_enc[layer+1](x)
-        x = self.quant(x)
+        x = self.tanh(x)
+    
+        # if self.quant_active:
+        #     x = self.quant(x)
 
         # Decoding Path
         for layer in range(self.num_layers):

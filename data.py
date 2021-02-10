@@ -110,7 +110,7 @@ class Dataset(torch.utils.data.Dataset):
         if self.num_ch == 1:
             audio = torch.mean(audio, axis=0, keepdim=True)
 
-        return audio, audio
+        return audio
 
     def __len__(self):
         return len(self.tuple_paths)

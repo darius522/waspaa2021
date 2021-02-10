@@ -107,18 +107,20 @@ class SkipEncoding(nn.Module):
         return x 
 
 class ScalarSoftmaxQuantization(nn.Module):
-    def __init__(self,         
+    def __init__(self, 
+        bins,        
         alpha,
-        bins, # Quantization bins
         code_length,
         num_kmean_kernels,
         feat_maps
-    ):
+        ):
+        
         super(ScalarSoftmaxQuantization, self).__init__()
 
-        self.alpha = -50 #tbd
-        self.bins_uniform = torch.rand(num_kmean_kernels,requires_grad=True) * 2 - 1
-        self.register_parameter(name='bins', param=(torch.nn.Parameter(self.bins_uniform, requires_grad=True)))
+        self.alpha = torch.nn.Parameter(torch.tensor(alpha, dtype=torch.float32), requires_grad=True)
+        self.register_parameter(name='quant_alpha', param=(self.alpha))
+        self.bins = torch.nn.Parameter(bins, requires_grad=True)
+        self.register_parameter(name='quant_bins', param=(self.bins))
         self.code_length = code_length
         self.feat_maps   = feat_maps
         self.num_kmean_kernels = num_kmean_kernels
@@ -139,24 +141,17 @@ class ScalarSoftmaxQuantization(nn.Module):
 
         bins_expand = torch.reshape(self.bins, (1, 1, 1, -1))
         dist = torch.abs(floating_code - bins_expand) # [-1, 21, 256, 4]
-        # print("Input: "+str(floating_code[0,0,200,:]))
-        # print("Bins: "+str(bins_expand[0,0,0,:]))
-        # print("Dist: "+str(dist[0,0,200,:]))
-        bottle_neck_size = floating_code.size()[1]
         soft_assignment = nn.Softmax(len(dist.size())-1)(torch.mul(self.alpha, dist))
-        soft_assignment_3d = soft_assignment
-        # print("SA:"+str(soft_assignment[0,0,200,:]))
+
         max_prob_bin = torch.topk(soft_assignment,1).indices
 
-        # print("Max Prob", max_prob_bin[0,0,200,:])
-        hard_assignment = torch.reshape(F.one_hot(max_prob_bin, self.num_kmean_kernels),
-                                     (input_size[0], self.feat_maps, self.code_length, self.num_kmean_kernels))
-        hard_assignment = hard_assignment.type(torch.float)
-        # print('hard_assignment', hard_assignment[0,0,200,:])
-        # print('soft_assignment', soft_assignment.size())
-
-        # If training, soft assignment, else hard
-        assignment = soft_assignment if self.training else hard_assignment
+        if not self.training:
+            hard_assignment = torch.reshape(F.one_hot(max_prob_bin, self.num_kmean_kernels),
+                                        (input_size[0], self.feat_maps, self.code_length, self.num_kmean_kernels))
+            hard_assignment = hard_assignment.type(torch.float)
+            assignment = hard_assignment
+        else:
+            assignment = soft_assignment
 
         bit_code = torch.matmul(assignment,self.bins)
         
