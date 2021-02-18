@@ -146,7 +146,7 @@ def torchaudio_loader(path, start=0, dur=None):
     # loads the full track duration
     if dur is None:
         sig, rate = torchaudio.load(path)
-        return sig
+        return sig, rate
         # otherwise loads a random excerpt
     else:
         start = int(start)
@@ -166,7 +166,6 @@ def load_audio(path, start=0, dur=None, sr=44100):
     import torchaudio
     loader = get_loading_backend()
     audio, fs = loader(path, start=start, dur=dur)
-    
     if not fs == sr:
         audio = torchaudio.transforms.Resample(fs, sr)(audio)
 

@@ -40,9 +40,9 @@ experiment_id = np.random.randint(0,1000000)
 parser = argparse.ArgumentParser(description='Trainer')
 
 parser.add_argument('--experiment-id', type=str, default=str(experiment_id))
-parser.add_argument('--model', type=str, default="waveunet_no_skip")
+parser.add_argument('--model', type=str, default="waveunet_enc_skip")
 parser.add_argument('--load-ckpt', type=str, default='558920')
-parser.add_argument('--message', type=str, default='TranspConv1D added')
+parser.add_argument('--message', type=str, default='layer=7, w=12, num_bins=32, entropy_target=1.5, summary: waveunet enc skip')
 
 # Dataset paramaters
 parser.add_argument('--root', type=str, default=rootPath, help='root path of dataset')
@@ -51,10 +51,13 @@ parser.add_argument('--output', type=str, default="output",
 
 # Trainig Parameters
 parser.add_argument('--epochs', type=int, default=300)
-parser.add_argument('--num-its', type=int, default=10)
+parser.add_argument('--num-its', type=int, default=1)
 parser.add_argument('--batch-size', type=int, default=16)
+
+# Hyper-parameters
 parser.add_argument('--quant', type=bool, default=False)
-parser.add_argument('--quant-active', type=int, default=0)
+parser.add_argument('--quant-active', type=int, default=1)
+parser.add_argument('--target-entropy', type=int, default=1.5)
 parser.add_argument('--lr', type=float, default=0.00001,
                     help='learning rate, defaults to 1e-4')
 parser.add_argument('--patience', type=int, default=300,
@@ -83,7 +86,7 @@ parser.add_argument('--nb-workers', type=int, default=0,
 # Misc Parameters
 parser.add_argument('--quiet', action='store_true', default=False,
                     help='less verbose during training')
-parser.add_argument('--device', action='store_true', default='cpu',
+parser.add_argument('--device', action='store_true', default='cuda:7',
                     help='cpu or cuda')
 
 args, _ = parser.parse_known_args()
@@ -103,7 +106,9 @@ random.shuffle(trPaths)
 tic=time.time()
 
 def train(args, model, device, train_sampler, optimizer, writer, epoch):
-    losses = utils.AverageMeter()
+    total_losses      = utils.AverageMeter()
+    perceptual_losses = utils.AverageMeter()
+    entropy_losses    = utils.AverageMeter()
     model.train()
 
     it_bar = tqdm.tqdm(range(args.num_its), disable=args.quiet, desc='Iteration',position=0)
@@ -113,28 +118,50 @@ def train(args, model, device, train_sampler, optimizer, writer, epoch):
     for it in it_bar:
         #it_bar.set_description("Training Iteration")
         for x in batch_bar:
+
             x = x.to(device)
             optimizer.zero_grad()
             y_hat = model(x)
-            loss = F.mse_loss(y_hat, x)
-            loss.backward()
+            model.entropy_control_update()
+
+            perceptual_loss = F.mse_loss(y_hat, x)
+            entropy_loss    = model.get_combined_entropy_loss()
+            total_loss      = (perceptual_loss + entropy_loss)
+            total_loss.backward()
             optimizer.step()
-            losses.update(loss.item(), x.size(1))
 
+            perceptual_losses.update(perceptual_loss.item())
+            entropy_losses.update(entropy_loss.item())
+            total_losses.update(total_loss.item(), x.size(1))
 
-    return losses.avg
+            model.reset_entropy_hists()
+
+    return perceptual_losses.avg, entropy_losses.avg, total_losses.avg
 
 def valid(args, model, device, valid_sampler, writer, epoch):
-    losses = utils.AverageMeter()
+    total_losses      = utils.AverageMeter()
+    perceptual_losses = utils.AverageMeter()
+    entropy_losses    = utils.AverageMeter()
+
     model.eval()
     with torch.no_grad():
+
         for x in valid_sampler:
+
             x = x.to(device)
             y_hat = model(x)
-            loss = F.mse_loss(y_hat, x)
-            losses.update(loss.item(), x.size(1))
 
-        return losses.avg
+            perceptual_loss = F.mse_loss(y_hat, x)
+            entropy_loss    = model.get_combined_entropy_loss()
+            total_loss      = (perceptual_loss + entropy_loss)
+
+            perceptual_losses.update(perceptual_loss.item())
+            entropy_losses.update(entropy_loss.item())
+            total_losses.update(total_loss.item(), x.size(1))
+
+            model.reset_entropy_hists()
+
+    return perceptual_losses.avg, entropy_losses.avg, total_losses.avg
 
 use_cuda = torch.cuda.is_available()
 device = torch.device(args.device if use_cuda else "cpu")
@@ -167,14 +194,19 @@ valid_sampler = torch.utils.data.DataLoader(
 )
 
 
-model = models.Waveunet(n_ch=args.nb_channels,model=utils.model_dic[args.model])
-model.to(device)
+model = models.Waveunet(
+    n_ch=args.nb_channels,
+    model=utils.model_dic[args.model],
+    target_entropy=args.target_entropy)
+
 writer = SummaryWriter(log_dir)
 summary(model,(args.nb_channels,args.seq_dur),device='cpu')
 print("Model loaded with num. param:", sum(p.numel() for p in model.parameters() if p.requires_grad))
 for name, param in model.named_parameters():
     if param.requires_grad and 'quant' in name:
         print(name, param.data)
+
+model.to(device)
 
 optimizer = torch.optim.Adam(
     model.parameters(),
@@ -203,18 +235,24 @@ for epoch in t:
     print("epoch:",epoch,"\nexperiment:",args.experiment_id,"\nmessage:",args.message)
     if epoch == args.quant_active:
         model.quant_active = True
+        for m in model.skip_encoders:
+            m.quant_active = True
 
-    train_loss = train(args, model, device, train_sampler, optimizer, writer, epoch)
-    valid_loss = valid(args, model, device, valid_sampler, writer, epoch)
+    perc_train_loss, ent_train_loss, train_loss = train(args, model, device, train_sampler, optimizer, writer, epoch)
+    perc_val_loss, ent_val_loss, valid_loss     = valid(args, model, device, valid_sampler, writer, epoch)
     #scheduler.step(valid_loss)
     train_losses.append(train_loss)
     valid_losses.append(valid_loss)
 
     writer.add_scalar("lr", optimizer.param_groups[0]["lr"], epoch)
-    writer.add_scalar("train_loss", train_loss, epoch)
-    writer.add_scalar("valid_loss", valid_loss, epoch)
-    writer.add_histogram('quantization bins', model.state_dict()['quant.quant_bins'].clone().cpu().data.numpy(), epoch)
-    writer.add_scalar('quantization alpha', model.state_dict()['quant.quant_alpha'].clone().cpu().data, epoch)
+    writer.add_scalar("perceptual_train_loss", perc_train_loss, epoch)
+    writer.add_scalar("perceptual_valid_loss", perc_val_loss, epoch)
+    writer.add_scalar("entropy_train_loss", ent_train_loss, epoch)
+    writer.add_scalar("entropy_valid_loss", ent_val_loss, epoch)
+    writer.add_scalar("total_train_loss", train_loss, epoch)
+    writer.add_scalar("total_valid_loss", valid_loss, epoch)
+    writer.add_histogram('quantization bins', model.state_dict()['quant_bins'].clone().cpu().data.numpy(), epoch)
+    writer.add_scalar('quantization alpha', model.state_dict()['quant_alpha'].clone().cpu().data, epoch)
 
     t.set_postfix(
         train_loss=train_loss, val_loss=valid_loss

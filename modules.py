@@ -3,6 +3,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+import utils
+
 class Downsample(nn.Module):
     def __init__(self):
         super().__init__()
@@ -15,10 +17,13 @@ class SkipEncoding(nn.Module):
         W_layer = 12, # maps per layer
         W = 24, # input maps
         H = 16384, # input samples
-        num_layers = 3,
+        num_layers = 3 ,
         kernel_size_down = 15,
         kernel_size_up = 5,
-        stride = 1
+        stride = 1,
+        quant_bins = None,
+        quant_alpha = -1.0,
+        module_name=''
     ):
         super(SkipEncoding, self).__init__()
 
@@ -30,13 +35,21 @@ class SkipEncoding(nn.Module):
         self.dec_num_filt = []
         self.W            = W
         self.W_layer      = W_layer
+        self.H            = H
         self.kernel_size_down = kernel_size_down
         self.kernel_size_up   = kernel_size_up
         self.stride           = stride
+        self.module_name = module_name
 
         self.leaky = nn.LeakyReLU(negative_slope=0.2)
         self.ds    = Downsample()
         self.us    = nn.Upsample(scale_factor=2, mode='linear',align_corners=True)
+
+        # Quant
+        self.quant = None
+        self.quant_active = False
+        self.quant_bins = quant_bins
+        self.quant_alpha = quant_alpha
 
         # Encoding Path
         for layer in range(num_layers):
@@ -55,21 +68,21 @@ class SkipEncoding(nn.Module):
             
             self.dec_num_filt.append(self.out_channels)
 
-        # Bottleneck
-        self.conv_bottleneck = Conv1d(
-            in_channels=self.out_channels,
-            out_channels=self.out_channels+self.W_layer,
-            kernel_size=self.kernel_size_up,
-            padding=(self.kernel_size_up // 2),
-            stride=self.stride)
-
-        self.bn_enc.append(BatchNorm1d(self.out_channels+self.W_layer))
+        bottleneck_shape = (int(self.W + (self.W_layer * self.num_layers)), int(self.H / (2 ** self.num_layers)))
+        self.quant = ScalarSoftmaxQuantization(
+            bins = self.quant_bins,
+            alpha = self.quant_alpha,
+            code_length = bottleneck_shape[1],
+            num_kmean_kernels = self.quant_bins.shape[0],
+            feat_maps = bottleneck_shape[0],
+            module_name = module_name
+        )
 
         # Decoding Path
         for layer in range(num_layers):
 
-            self.out_channels = self.dec_num_filt[-layer-1] - self.W_layer if (layer == num_layers-1) else self.dec_num_filt[-layer-1]
-            self.in_channels = self.dec_num_filt[-layer-1] + self.W_layer
+            self.out_channels = self.dec_num_filt[-layer-1] - self.W_layer # if (layer == num_layers-1) else self.dec_num_filt[-layer-1]
+            self.in_channels = self.dec_num_filt[-layer-1]
 
             self.dec_conv.append(nn.Conv1d(
                 in_channels=self.in_channels,
@@ -90,9 +103,11 @@ class SkipEncoding(nn.Module):
             x = self.leaky(x)
             x = self.ds(x)
 
-        # Bottleneck
-        x = self.conv_bottleneck(x)
-        x = self.bn_enc[-1](x)
+        # # Bottleneck
+        # x = self.conv_bottleneck(x)
+        # x = self.bn_enc[-1](x)
+        if self.quant_active:
+            x = self.quant(x)
 
         # Decoding Path
         for layer in range(self.num_layers):
@@ -112,25 +127,27 @@ class ScalarSoftmaxQuantization(nn.Module):
         alpha,
         code_length,
         num_kmean_kernels,
-        feat_maps
+        feat_maps,
+        module_name=''
         ):
         
         super(ScalarSoftmaxQuantization, self).__init__()
 
-        self.alpha = torch.nn.Parameter(torch.tensor(alpha, dtype=torch.float32), requires_grad=True)
-        self.register_parameter(name='quant_alpha', param=(self.alpha))
-        self.bins = torch.nn.Parameter(bins, requires_grad=True)
-        self.register_parameter(name='quant_bins', param=(self.bins))
+        self.bins = bins
+        self.alpha = alpha
         self.code_length = code_length
         self.feat_maps   = feat_maps
         self.num_kmean_kernels = num_kmean_kernels
+
+        # Entropy control
+        self.entropies = utils.AverageMeter()
+        self.tau = 1.0
     
     def forward(self, x):
 
         '''
         x = [batch_size, feature_maps, floating_code] // [-1, 21, 256]
         bins = [quant_num_bins] // [4]
-
         output = [-1, 21, 256]
         '''
 
@@ -152,7 +169,13 @@ class ScalarSoftmaxQuantization(nn.Module):
             assignment = hard_assignment
         else:
             assignment = soft_assignment
-
+            p = torch.sum(soft_assignment,dim=(0,1,2)) / (input_size[0]*self.feat_maps*self.code_length) #[num_kmean_kernels]
+            # q = torch.histc(floating_code,bins=self.num_kmean_kernels)
+            # q /= torch.sum(q)
+            # Compute entropy loss
+            soft_entropy = -torch.sum(torch.mul(p,torch.log(p)))
+            self.entropies.update(soft_entropy.item())
+            
         bit_code = torch.matmul(assignment,self.bins)
         
-        return bit_code     
+        return bit_code  
