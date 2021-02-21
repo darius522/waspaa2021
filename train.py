@@ -40,9 +40,9 @@ experiment_id = np.random.randint(0,1000000)
 parser = argparse.ArgumentParser(description='Trainer')
 
 parser.add_argument('--experiment-id', type=str, default=str(experiment_id))
-parser.add_argument('--model', type=str, default="waveunet_enc_skip")
+parser.add_argument('--model', type=str, default="waveunet_no_skip")
 parser.add_argument('--load-ckpt', type=str, default='558920')
-parser.add_argument('--message', type=str, default='layer=7, w=12, num_bins=32, entropy_target=1.5, summary: waveunet enc skip')
+parser.add_argument('--message', type=str, default='layer=7, w=12, num_bins=32, entropy_target=1.5, summary: waveunet no skip')
 
 # Dataset paramaters
 parser.add_argument('--root', type=str, default=rootPath, help='root path of dataset')
@@ -51,13 +51,18 @@ parser.add_argument('--output', type=str, default="output",
 
 # Trainig Parameters
 parser.add_argument('--epochs', type=int, default=300)
-parser.add_argument('--num-its', type=int, default=1)
+parser.add_argument('--num-its', type=int, default=8)
 parser.add_argument('--batch-size', type=int, default=16)
 
 # Hyper-parameters
+# Quant/Entropy
 parser.add_argument('--quant', type=bool, default=False)
 parser.add_argument('--quant-active', type=int, default=1)
-parser.add_argument('--target-entropy', type=int, default=1.5)
+parser.add_argument('--target-bitrate', type=int, default=64000,
+                    help='target bitrate. by default the bitrate of 44.1 mono audio = 705,600')
+parser.add_argument('--bitrate-fuzz', type=int, default=450,
+                    help='amount of bitrate fuzz allowed around the target bitrate before adjusting tau')
+
 parser.add_argument('--lr', type=float, default=0.00001,
                     help='learning rate, defaults to 1e-4')
 parser.add_argument('--patience', type=int, default=300,
@@ -86,7 +91,7 @@ parser.add_argument('--nb-workers', type=int, default=0,
 # Misc Parameters
 parser.add_argument('--quiet', action='store_true', default=False,
                     help='less verbose during training')
-parser.add_argument('--device', action='store_true', default='cuda:7',
+parser.add_argument('--device', action='store_true', default='cuda:6',
                     help='cpu or cuda')
 
 args, _ = parser.parse_known_args()
@@ -109,32 +114,37 @@ def train(args, model, device, train_sampler, optimizer, writer, epoch):
     total_losses      = utils.AverageMeter()
     perceptual_losses = utils.AverageMeter()
     entropy_losses    = utils.AverageMeter()
+    entropy_loss      = torch.Tensor([0]).to(device)
     model.train()
 
     it_bar = tqdm.tqdm(range(args.num_its), disable=args.quiet, desc='Iteration',position=0)
     batch_bar = tqdm.tqdm(train_sampler, disable=args.quiet, desc='Batch',position=1)
-
+    torch.autograd.set_detect_anomaly(True)
     # Total num it: num_its x batch_size x training examples
     for it in it_bar:
         #it_bar.set_description("Training Iteration")
-        for x in batch_bar:
+        for i, x in enumerate(batch_bar):
 
             x = x.to(device)
             optimizer.zero_grad()
             y_hat = model(x)
-            model.entropy_control_update()
 
             perceptual_loss = F.mse_loss(y_hat, x)
-            entropy_loss    = model.get_combined_entropy_loss()
-            total_loss      = (perceptual_loss + entropy_loss)
-            total_loss.backward()
+            if model.quant_active == True:
+                entropy_loss = model.entropy_loss()
+
+            total_loss = (perceptual_loss + entropy_loss)
+            total_loss.backward(retain_graph=True)
             optimizer.step()
 
             perceptual_losses.update(perceptual_loss.item())
             entropy_losses.update(entropy_loss.item())
             total_losses.update(total_loss.item(), x.size(1))
 
-            model.reset_entropy_hists()
+        if model.quant_active == True:
+            print("entropy loss:",entropy_loss)
+            print("perceptual loss:",perceptual_loss)
+            print("entropy avg:",model.get_overall_entropy_avg())
 
     return perceptual_losses.avg, entropy_losses.avg, total_losses.avg
 
@@ -152,14 +162,14 @@ def valid(args, model, device, valid_sampler, writer, epoch):
             y_hat = model(x)
 
             perceptual_loss = F.mse_loss(y_hat, x)
-            entropy_loss    = model.get_combined_entropy_loss()
+            entropy_loss    = model.entropy_loss()
             total_loss      = (perceptual_loss + entropy_loss)
 
             perceptual_losses.update(perceptual_loss.item())
             entropy_losses.update(entropy_loss.item())
             total_losses.update(total_loss.item(), x.size(1))
 
-            model.reset_entropy_hists()
+        model.entropy_control_update()
 
     return perceptual_losses.avg, entropy_losses.avg, total_losses.avg
 
@@ -197,10 +207,12 @@ valid_sampler = torch.utils.data.DataLoader(
 model = models.Waveunet(
     n_ch=args.nb_channels,
     model=utils.model_dic[args.model],
-    target_entropy=args.target_entropy)
+    target_entropy=utils.bitrate_to_entropy(args.target_bitrate,args.sample_rate),
+    entropy_fuzz=utils.bitrate_to_entropy(args.bitrate_fuzz,args.sample_rate))
 
 writer = SummaryWriter(log_dir)
-summary(model,(args.nb_channels,args.seq_dur),device='cpu')
+#summary(model,(args.nb_channels,args.seq_dur),device='cpu')
+print("Target bitrate set to:")
 print("Model loaded with num. param:", sum(p.numel() for p in model.parameters() if p.requires_grad))
 for name, param in model.named_parameters():
     if param.requires_grad and 'quant' in name:

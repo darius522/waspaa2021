@@ -95,6 +95,8 @@ class SkipEncoding(nn.Module):
 
     def forward(self, x):
 
+        weighted_code_entropy = torch.zeros(1,2,dtype=torch.float)
+
         # Encoding Path
         for layer in range(self.num_layers):
 
@@ -107,7 +109,8 @@ class SkipEncoding(nn.Module):
         # x = self.conv_bottleneck(x)
         # x = self.bn_enc[-1](x)
         if self.quant_active:
-            x = self.quant(x)
+            x, code_entropy = self.quant(x)
+            weighted_code_entropy = code_entropy
 
         # Decoding Path
         for layer in range(self.num_layers):
@@ -119,7 +122,7 @@ class SkipEncoding(nn.Module):
             x = self.bn_dec[layer](x)
             x = self.leaky(x)
 
-        return x 
+        return x, weighted_code_entropy
 
 class ScalarSoftmaxQuantization(nn.Module):
     def __init__(self, 
@@ -140,8 +143,9 @@ class ScalarSoftmaxQuantization(nn.Module):
         self.num_kmean_kernels = num_kmean_kernels
 
         # Entropy control
-        self.entropies = utils.AverageMeter()
-        self.tau = 1.0
+        self.code_entropy = 0
+        self.tau = 0.5
+        self.entropy_avg = losses = utils.AverageMeter()
     
     def forward(self, x):
 
@@ -152,6 +156,7 @@ class ScalarSoftmaxQuantization(nn.Module):
         '''
 
         input_size = x.size()
+        weighted_code_entropy = torch.zeros(1,2,dtype=torch.float)
 
         x = torch.unsqueeze(x, len(x.size()))
         floating_code = x.expand(input_size[0],self.feat_maps,self.code_length,self.num_kmean_kernels)
@@ -173,9 +178,11 @@ class ScalarSoftmaxQuantization(nn.Module):
             # q = torch.histc(floating_code,bins=self.num_kmean_kernels)
             # q /= torch.sum(q)
             # Compute entropy loss
-            soft_entropy = -torch.sum(torch.mul(p,torch.log(p)))
-            self.entropies.update(soft_entropy.item())
+            self.code_entropy = -torch.sum(torch.mul(p,torch.log(p)))
+            self.entropy_avg.update(self.code_entropy.detach())
+            weighted_code_entropy[:,0] = self.code_entropy
+            weighted_code_entropy[:,1] = self.tau
             
         bit_code = torch.matmul(assignment,self.bins)
         
-        return bit_code  
+        return bit_code, weighted_code_entropy

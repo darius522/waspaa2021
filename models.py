@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from utils import (get_uniform_distribution, Model)
+import numpy as np
 
 import modules
      
@@ -12,14 +13,15 @@ class Waveunet(nn.Module):
         W = 12,
         H = 16384,
         n_ch = 1,
-        num_layers = 7,
+        num_layers = 5,
         kernel_size_down = 15,
         kernel_size_up = 5,
         output_filter_size = 1,
         stride = 1,
         model = Model.waveunet_skip,
         quant_num_bins = 2**5,
-        target_entropy = 1.5
+        target_entropy = 1.5,
+        entropy_fuzz = 0.01
     ):
 
         super(Waveunet, self).__init__()
@@ -55,8 +57,11 @@ class Waveunet(nn.Module):
         self.register_parameter(name='bins', param=(self.quant_bins))
         # Entropy
         self.target_entropy = target_entropy
-        self.entropy_fuzz = 0.45
+        self.entropy_fuzz = entropy_fuzz
+        print('target entropy:',self.target_entropy)
+        print('entropy fuzz:',self.entropy_fuzz)
         self.tau_change   = 0.025
+        self.code_entropies = torch.zeros(1,2,dtype=torch.float)
 
         # Encoding Path
         for layer in range(num_layers):
@@ -149,6 +154,7 @@ class Waveunet(nn.Module):
         """
 
         self.skip = []
+        self.code_entropies = torch.zeros(1,2,dtype=torch.float)
 
         # Save original inputs for outputs
         inputs = x
@@ -171,7 +177,8 @@ class Waveunet(nn.Module):
         x = self.tanh(x)
     
         if self.quant_active:
-            x = self.quant(x)
+            x, code_entropy = self.quant(x)
+            self.code_entropies = code_entropy
 
         # Decoding Path
         for layer in range(self.num_layers):
@@ -185,7 +192,9 @@ class Waveunet(nn.Module):
                     skip_layer = self.skip[-layer-1]
                 # Encoded skip
                 elif self.model == Model.waveunet_enc_skip:
-                    skip_layer = self.skip_encoders[layer](self.skip[-layer-1])
+                    skip_layer, skip_entropy = self.skip_encoders[layer](self.skip[-layer-1])
+                    if self.quant_active:
+                        self.code_entropies = torch.cat((self.code_entropies,skip_entropy))
 
                 x = torch.cat((x, skip_layer), 1)
 
@@ -196,7 +205,9 @@ class Waveunet(nn.Module):
         # Final concatenation with original input, 1x1 convolution, and tanh output
         if not self.model == Model.waveunet_no_skip:
             if self.model == Model.waveunet_enc_skip:
-                inputs = self.skip_encoders[-1](inputs)
+                inputs, input_entropy = self.skip_encoders[-1](inputs)
+                if self.quant_active:
+                    self.code_entropies = torch.cat((self.code_entropies,input_entropy))
             x = torch.cat((x, inputs), 1)
         x = self.dec_conv[-1](x)
         y = self.tanh(x)
@@ -210,41 +221,40 @@ class Waveunet(nn.Module):
         '''
 
         # Get bottleneck quant
-        if self.quant.entropies.avg < (self.target_entropy - self.entropy_fuzz):
+        if self.quant.entropy_avg.avg < (self.target_entropy - self.entropy_fuzz):
             self.quant.tau -= self.tau_change
-        elif self.quant.entropies.avg > (self.target_entropy + self.entropy_fuzz):
+        elif self.quant.entropy_avg.avg > (self.target_entropy + self.entropy_fuzz):
             self.quant.tau += self.tau_change
 
         if self.model == Model.waveunet_enc_skip:
             for skip in self.skip_encoders:
-                if skip.quant.entropies.avg < (self.target_entropy - self.entropy_fuzz):
+                if skip.quant.entropy_avg.avg < (self.target_entropy - self.entropy_fuzz):
                     skip.quant.tau -= self.tau_change
-                elif skip.quant.entropies.avg > (self.target_entropy + self.entropy_fuzz):
+                elif skip.quant.entropy_avg.avg > (self.target_entropy + self.entropy_fuzz):
                     self.quant.tau += self.tau_change
+        
+        self.reset_entropy_hists()
 
-    def get_combined_entropy_loss(self):
+    def entropy_loss(self):
         '''
         combine all quantizer modules' soft-assignment entropy mean
         '''
-
-        entropies = torch.Tensor([self.quant.entropies.avg])
-        taus      = torch.Tensor([self.quant.tau])
-        target_entropy = torch.Tensor([self.target_entropy])
-
+        return torch.sum(torch.pow((self.code_entropies[:,0] - self.target_entropy),2) * self.code_entropies[:,1]) / self.code_entropies.size(0)
+    
+    def get_overall_entropy_avg(self):
+        avgs = [self.quant.entropy_avg.avg.item()]
         if self.model == Model.waveunet_enc_skip:
             for skip in self.skip_encoders:
-                entropies      = torch.cat((entropies, torch.Tensor([skip.quant.entropies.avg])), 0)
-                taus           = torch.cat((taus, torch.Tensor([skip.quant.tau])), 0)
-                target_entropy = torch.cat((target_entropy, torch.Tensor([self.target_entropy])), 0)
+                avgs.append(skip.quant.entropy_avg.avg.item())
 
-        return (torch.sum(torch.pow((entropies - target_entropy) * taus, 2)) / target_entropy.size()[0])
+        return np.mean(np.asarray(avgs))
 
     def reset_entropy_hists(self):
 
-        self.quant.entropies.reset()
+        self.quant.entropy_avg.reset()
         if self.model == Model.waveunet_enc_skip:
             for skip in self.skip_encoders:
-                skip.quant.entropies.reset()
+                skip.quant.entropy_avg.reset()
 
 class U_Net(nn.Module):
     def __init__(self, H, Hc, Hskip, W1, W2):

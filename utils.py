@@ -38,6 +38,11 @@ def smooth(scalars, weight):  # Weight between 0 and 1
     
     return smoothed
 
+def entropy_to_bitrate(entropy, sr):
+    return 
+
+def bitrate_to_entropy(bitrate, sr):
+    return float(bitrate / float(sr))
 
 def plot_loss_to_png(json_file):
     with open(json_file) as jsonF: 
