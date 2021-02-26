@@ -5,6 +5,8 @@ import torch.nn.functional as F
 
 import utils
 
+from random import randrange
+
 class Downsample(nn.Module):
     def __init__(self):
         super().__init__()
@@ -22,7 +24,7 @@ class SkipEncoding(nn.Module):
         kernel_size_up = 5,
         stride = 1,
         quant_bins = None,
-        quant_alpha = -1.0,
+        quant_alpha = -10.0,
         module_name=''
     ):
         super(SkipEncoding, self).__init__()
@@ -96,6 +98,7 @@ class SkipEncoding(nn.Module):
     def forward(self, x):
 
         weighted_code_entropy = torch.zeros(1,2,dtype=torch.float)
+        quant_loss = torch.zeros(1,dtype=torch.float)
 
         # Encoding Path
         for layer in range(self.num_layers):
@@ -109,7 +112,7 @@ class SkipEncoding(nn.Module):
         # x = self.conv_bottleneck(x)
         # x = self.bn_enc[-1](x)
         if self.quant_active:
-            x, code_entropy = self.quant(x)
+            x, code_entropy, quant_loss = self.quant(x)
             weighted_code_entropy = code_entropy
 
         # Decoding Path
@@ -122,7 +125,7 @@ class SkipEncoding(nn.Module):
             x = self.bn_dec[layer](x)
             x = self.leaky(x)
 
-        return x, weighted_code_entropy
+        return x, weighted_code_entropy, quant_loss
 
 class ScalarSoftmaxQuantization(nn.Module):
     def __init__(self, 
@@ -157,6 +160,7 @@ class ScalarSoftmaxQuantization(nn.Module):
 
         input_size = x.size()
         weighted_code_entropy = torch.zeros(1,2,dtype=torch.float)
+        quant_loss = torch.zeros(1,dtype=torch.float)
 
         x = torch.unsqueeze(x, len(x.size()))
         floating_code = x.expand(input_size[0],self.feat_maps,self.code_length,self.num_kmean_kernels)
@@ -174,15 +178,20 @@ class ScalarSoftmaxQuantization(nn.Module):
             assignment = hard_assignment
         else:
             assignment = soft_assignment
-            p = torch.sum(soft_assignment,dim=(0,1,2)) / (input_size[0]*self.feat_maps*self.code_length) #[num_kmean_kernels]
+            p = torch.mean(soft_assignment,dim=(0,1,2))
             # q = torch.histc(floating_code,bins=self.num_kmean_kernels)
             # q /= torch.sum(q)
             # Compute entropy loss
             self.code_entropy = -torch.sum(torch.mul(p,torch.log(p)))
             self.entropy_avg.update(self.code_entropy.detach())
+
+            # Weighted entropy regularization term
             weighted_code_entropy[:,0] = self.code_entropy
             weighted_code_entropy[:,1] = self.tau
+
+            # Quantization regularization term, prevent alpha from getting to big
+            quant_loss = torch.mean(torch.sqrt(assignment))
             
         bit_code = torch.matmul(assignment,self.bins)
         
-        return bit_code, weighted_code_entropy
+        return bit_code, weighted_code_entropy, quant_loss

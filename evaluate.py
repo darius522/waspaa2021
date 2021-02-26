@@ -31,7 +31,7 @@ parser.add_argument('--model-id', type=str, default='909074')
 parser.add_argument('--seq-dur', type=float, default=16384)
 parser.add_argument('--nb-channels', type=int, default=1)
 parser.add_argument('--sample-rate', type=int, default=44100)
-parser.add_argument('--overlap', type=int, default=512)
+parser.add_argument('--overlap', type=int, default=64)
 parser.add_argument('--window', type=str, default='hann')
 parser.add_argument('--device', type=str, default='cpu')
 
@@ -175,11 +175,11 @@ def make_an_experiment(model_name='',model_id=''):
     fig.tight_layout()
     plt.savefig(os.path.join(args.main_dir,model_name+'/'+model_id+'/'+'sample_entropy'+str(args.overlap)+'.png'))
 
-    print(np.unique(y.cpu().permute(1,0).detach().numpy(), return_counts=True))
+    #print(np.unique(y.cpu().permute(1,0).detach().numpy(), return_counts=True))
 
     utils.soundfile_writer(os.path.join(args.main_dir,model_name+'/'+model_id+'/'+'x'+str(args.overlap)+'.wav'), x.cpu().permute(1,0).detach().numpy(), 44100)
     utils.soundfile_writer(os.path.join(args.main_dir,model_name+'/'+model_id+'/'+'y'+str(args.overlap)+'.wav'), y.cpu().permute(1,0).detach().numpy(), 44100)
 
     return x, y
 
-make_an_experiment(model_name='waveunet_no_skip',model_id='208658')
+#make_an_experiment(model_name='waveunet_no_skip',model_id='208658')

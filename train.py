@@ -42,7 +42,11 @@ parser = argparse.ArgumentParser(description='Trainer')
 parser.add_argument('--experiment-id', type=str, default=str(experiment_id))
 parser.add_argument('--model', type=str, default="waveunet_no_skip")
 parser.add_argument('--load-ckpt', type=str, default='558920')
-parser.add_argument('--message', type=str, default='layer=7, w=12, num_bins=32, entropy_target=1.5, summary: waveunet no skip')
+parser.add_argument('--message', type=str, default='layer=5, \
+                                                    w=4, \
+                                                    num_bins=32, \
+                                                    entropy_target=64kbps, \
+                                                    summary: model: waveunet no skip, loss: soft-assignment/quant/mse [60.0, 5.0, 5.0], alpha: -10')
 
 # Dataset paramaters
 parser.add_argument('--root', type=str, default=rootPath, help='root path of dataset')
@@ -57,12 +61,14 @@ parser.add_argument('--batch-size', type=int, default=16)
 # Hyper-parameters
 # Quant/Entropy
 parser.add_argument('--quant', type=bool, default=False)
-parser.add_argument('--quant-active', type=int, default=1)
+parser.add_argument('--quant-active', type=int, default=7)
 parser.add_argument('--target-bitrate', type=int, default=64000,
                     help='target bitrate. by default the bitrate of 44.1 mono audio = 705,600')
 parser.add_argument('--bitrate-fuzz', type=int, default=450,
                     help='amount of bitrate fuzz allowed around the target bitrate before adjusting tau')
 
+parser.add_argument('--loss-weights', type=list, default=[60.0, 3.0, 15.0],
+                    help='weight of each loss term: [mse,quant,entropy]')
 parser.add_argument('--lr', type=float, default=0.00001,
                     help='learning rate, defaults to 1e-4')
 parser.add_argument('--patience', type=int, default=300,
@@ -78,8 +84,8 @@ parser.add_argument('--seed', type=int, default=42, metavar='S',
 
 # Model Parameters
 parser.add_argument('--seq-dur', type=float, default=16384,
-                    help='Sequence duration in seconds'
-                    'value of <=0.0 will use full/variable length')
+                    help='Sequence duration in seconds')
+parser.add_argument('--overlap', type=float, default=64)
 parser.add_argument('--zero-pad', type=float, default=1024+7040, 
                     help='Optional zero-padding to be added to batch')
 parser.add_argument('--nb-channels', type=int, default=1,
@@ -91,7 +97,7 @@ parser.add_argument('--nb-workers', type=int, default=0,
 # Misc Parameters
 parser.add_argument('--quiet', action='store_true', default=False,
                     help='less verbose during training')
-parser.add_argument('--device', action='store_true', default='cuda:6',
+parser.add_argument('--device', action='store_true', default='cuda:7',
                     help='cpu or cuda')
 
 args, _ = parser.parse_known_args()
@@ -111,10 +117,14 @@ random.shuffle(trPaths)
 tic=time.time()
 
 def train(args, model, device, train_sampler, optimizer, writer, epoch):
-    total_losses      = utils.AverageMeter()
-    perceptual_losses = utils.AverageMeter()
-    entropy_losses    = utils.AverageMeter()
+    total_losses        = utils.AverageMeter()
+    mse_losses   = utils.AverageMeter()
+    entropy_losses      = utils.AverageMeter()
+    quantization_losses = utils.AverageMeter()
+
     entropy_loss      = torch.Tensor([0]).to(device)
+    quantization_loss = torch.Tensor([0]).to(device)
+    entropy_avg       = 0
     model.train()
 
     it_bar = tqdm.tqdm(range(args.num_its), disable=args.quiet, desc='Iteration',position=0)
@@ -129,29 +139,44 @@ def train(args, model, device, train_sampler, optimizer, writer, epoch):
             optimizer.zero_grad()
             y_hat = model(x)
 
-            perceptual_loss = F.mse_loss(y_hat, x)
+            mse_loss = F.mse_loss(y_hat, x)
             if model.quant_active == True:
                 entropy_loss = model.entropy_loss()
+                quantization_loss = model.quantization_loss()
+                entropy_avg  = model.get_overall_entropy_avg()
 
-            total_loss = (perceptual_loss + entropy_loss)
+            total_loss = ((mse_loss * args.loss_weights[0]) +\
+                          (quantization_loss * args.loss_weights[1]) +\
+                          (entropy_loss * args.loss_weights[2]))
             total_loss.backward(retain_graph=True)
             optimizer.step()
 
-            perceptual_losses.update(perceptual_loss.item())
+            mse_losses.update(mse_loss.item())
             entropy_losses.update(entropy_loss.item())
+            quantization_losses.update(quantization_loss.item())
             total_losses.update(total_loss.item(), x.size(1))
 
         if model.quant_active == True:
             print("entropy loss:",entropy_loss)
-            print("perceptual loss:",perceptual_loss)
-            print("entropy avg:",model.get_overall_entropy_avg())
+            print("quantization loss:",quantization_loss)
+            print("mse loss:",mse_loss)
+            print("entropy avg:",entropy_avg)
+            print("bitrate avg:",utils.entropy_to_bitrate(entropy_avg,
+                                                        args.sample_rate,
+                                                        args.seq_dur,
+                                                        args.overlap,
+                                                        [24, 512]))
 
-    return perceptual_losses.avg, entropy_losses.avg, total_losses.avg
+    return mse_losses.avg, entropy_losses.avg, quantization_losses.avg, total_losses.avg, entropy_avg
 
 def valid(args, model, device, valid_sampler, writer, epoch):
-    total_losses      = utils.AverageMeter()
-    perceptual_losses = utils.AverageMeter()
-    entropy_losses    = utils.AverageMeter()
+    total_losses        = utils.AverageMeter()
+    mse_losses   = utils.AverageMeter()
+    entropy_losses      = utils.AverageMeter()
+    quantization_losses = utils.AverageMeter()
+
+    entropy_loss      = torch.Tensor([0]).to(device)
+    quantization_loss = torch.Tensor([0]).to(device)
 
     model.eval()
     with torch.no_grad():
@@ -161,17 +186,23 @@ def valid(args, model, device, valid_sampler, writer, epoch):
             x = x.to(device)
             y_hat = model(x)
 
-            perceptual_loss = F.mse_loss(y_hat, x)
-            entropy_loss    = model.entropy_loss()
-            total_loss      = (perceptual_loss + entropy_loss)
+            mse_loss = F.mse_loss(y_hat, x)
+            if model.quant_active == True:
+                entropy_loss = model.entropy_loss()
+                quantization_loss = model.quantization_loss()
 
-            perceptual_losses.update(perceptual_loss.item())
+            total_loss = ((mse_loss * args.loss_weights[0]) +\
+                          (quantization_loss * args.loss_weights[1]) +\
+                          (entropy_loss * args.loss_weights[2]))
+
+            mse_losses.update(mse_loss.item())
             entropy_losses.update(entropy_loss.item())
+            quantization_losses.update(quantization_loss.item())
             total_losses.update(total_loss.item(), x.size(1))
 
         model.entropy_control_update()
 
-    return perceptual_losses.avg, entropy_losses.avg, total_losses.avg
+    return mse_losses.avg, entropy_losses.avg, quantization_losses.avg, total_losses.avg
 
 use_cuda = torch.cuda.is_available()
 device = torch.device(args.device if use_cuda else "cpu")
@@ -207,12 +238,19 @@ valid_sampler = torch.utils.data.DataLoader(
 model = models.Waveunet(
     n_ch=args.nb_channels,
     model=utils.model_dic[args.model],
-    target_entropy=utils.bitrate_to_entropy(args.target_bitrate,args.sample_rate),
-    entropy_fuzz=utils.bitrate_to_entropy(args.bitrate_fuzz,args.sample_rate))
+    target_entropy=utils.bitrate_to_entropy(args.target_bitrate,\
+                                            args.sample_rate,\
+                                            args.seq_dur,\
+                                            args.overlap,\
+                                            [24, 512]),
+    entropy_fuzz=utils.bitrate_to_entropy(args.bitrate_fuzz,\
+                                        args.sample_rate,\
+                                        args.seq_dur,\
+                                        args.overlap,\
+                                        [24, 512]))
 
 writer = SummaryWriter(log_dir)
-#summary(model,(args.nb_channels,args.seq_dur),device='cpu')
-print("Target bitrate set to:")
+summary(model,(args.nb_channels,args.seq_dur),device='cpu')
 print("Model loaded with num. param:", sum(p.numel() for p in model.parameters() if p.requires_grad))
 for name, param in model.named_parameters():
     if param.requires_grad and 'quant' in name:
@@ -250,19 +288,33 @@ for epoch in t:
         for m in model.skip_encoders:
             m.quant_active = True
 
-    perc_train_loss, ent_train_loss, train_loss = train(args, model, device, train_sampler, optimizer, writer, epoch)
-    perc_val_loss, ent_val_loss, valid_loss     = valid(args, model, device, valid_sampler, writer, epoch)
+    mse_train_loss, ent_train_loss, quant_train_loss, train_loss, entropy_avg = train(args,
+                                                                                        model,
+                                                                                        device,
+                                                                                        train_sampler,
+                                                                                        optimizer,
+                                                                                        writer,
+                                                                                        epoch)
+    mse_val_loss, ent_val_loss, quant_valid_loss, valid_loss = valid(args, 
+                                                                    model,
+                                                                    device,
+                                                                    valid_sampler,
+                                                                    writer,
+                                                                    epoch)
     #scheduler.step(valid_loss)
     train_losses.append(train_loss)
     valid_losses.append(valid_loss)
 
     writer.add_scalar("lr", optimizer.param_groups[0]["lr"], epoch)
-    writer.add_scalar("perceptual_train_loss", perc_train_loss, epoch)
-    writer.add_scalar("perceptual_valid_loss", perc_val_loss, epoch)
+    writer.add_scalar("mse_train_loss", mse_train_loss, epoch)
+    writer.add_scalar("mse_valid_loss", mse_val_loss, epoch)
     writer.add_scalar("entropy_train_loss", ent_train_loss, epoch)
     writer.add_scalar("entropy_valid_loss", ent_val_loss, epoch)
+    writer.add_scalar("quant_train_loss", quant_train_loss, epoch)
+    writer.add_scalar("quant_valid_loss", quant_valid_loss, epoch)
     writer.add_scalar("total_train_loss", train_loss, epoch)
     writer.add_scalar("total_valid_loss", valid_loss, epoch)
+    writer.add_scalar("entropy_avg", entropy_avg, epoch)
     writer.add_histogram('quantization bins', model.state_dict()['quant_bins'].clone().cpu().data.numpy(), epoch)
     writer.add_scalar('quantization alpha', model.state_dict()['quant_alpha'].clone().cpu().data, epoch)
 

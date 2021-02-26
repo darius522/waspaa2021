@@ -38,11 +38,11 @@ def smooth(scalars, weight):  # Weight between 0 and 1
     
     return smoothed
 
-def entropy_to_bitrate(entropy, sr):
-    return 
+def entropy_to_bitrate(entropy, sr, window_size, overlap, bottleneck_dim):
+    return (sr / (window_size-overlap)) * entropy * np.prod(bottleneck_dim)
 
-def bitrate_to_entropy(bitrate, sr):
-    return float(bitrate / float(sr))
+def bitrate_to_entropy(bitrate, sr, window_size, overlap, bottleneck_dim):
+    return bitrate * (window_size - overlap) / (sr * np.prod(bottleneck_dim))
 
 def plot_loss_to_png(json_file):
     with open(json_file) as jsonF: 
