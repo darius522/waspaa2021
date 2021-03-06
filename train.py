@@ -1,4 +1,7 @@
 import os
+os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
+os.environ["CUDA_VISIBLE_DEVICES"]="6"  # specify which GPU(s) to be used
+
 import torch
 import torch.nn as nn
 import numpy as np
@@ -46,7 +49,7 @@ parser.add_argument('--message', type=str, default='layer=5, \
                                                     w=4, \
                                                     num_bins=32, \
                                                     entropy_target=64kbps, \
-                                                    summary: model: waveunet no skip, loss: soft-assignment/quant/mse [60.0, 5.0, 5.0], alpha: -10')
+                                                    summary: tau = 1.0, tau2 = 1.0, tau_change = 0.125 (up and down), tau_change2 = 0.250 (up), loss: soft-assignment/quant/mse [70.0, 5.0, 10.0], alpha: -20, transpConv')
 
 # Dataset paramaters
 parser.add_argument('--root', type=str, default=rootPath, help='root path of dataset')
@@ -55,7 +58,7 @@ parser.add_argument('--output', type=str, default="output",
 
 # Trainig Parameters
 parser.add_argument('--epochs', type=int, default=300)
-parser.add_argument('--num-its', type=int, default=8)
+parser.add_argument('--num-its', type=int, default=1)
 parser.add_argument('--batch-size', type=int, default=16)
 
 # Hyper-parameters
@@ -67,9 +70,11 @@ parser.add_argument('--target-bitrate', type=int, default=64000,
 parser.add_argument('--bitrate-fuzz', type=int, default=450,
                     help='amount of bitrate fuzz allowed around the target bitrate before adjusting tau')
 
-parser.add_argument('--loss-weights', type=list, default=[60.0, 3.0, 15.0],
+parser.add_argument('--loss-weights', type=list, default=[70.0, 5.0, 10.0],
                     help='weight of each loss term: [mse,quant,entropy]')
-parser.add_argument('--lr', type=float, default=0.00001,
+parser.add_argument('--num-skips', type=list, default=1)
+
+parser.add_argument('--lr', type=float, default=0.001,
                     help='learning rate, defaults to 1e-4')
 parser.add_argument('--patience', type=int, default=300,
                     help='maximum number of epochs to train (default: 140)')
@@ -97,7 +102,7 @@ parser.add_argument('--nb-workers', type=int, default=0,
 # Misc Parameters
 parser.add_argument('--quiet', action='store_true', default=False,
                     help='less verbose during training')
-parser.add_argument('--device', action='store_true', default='cuda:7',
+parser.add_argument('--device', action='store_true', default='cuda:0',
                     help='cpu or cuda')
 
 args, _ = parser.parse_known_args()
@@ -129,7 +134,7 @@ def train(args, model, device, train_sampler, optimizer, writer, epoch):
 
     it_bar = tqdm.tqdm(range(args.num_its), disable=args.quiet, desc='Iteration',position=0)
     batch_bar = tqdm.tqdm(train_sampler, disable=args.quiet, desc='Batch',position=1)
-    torch.autograd.set_detect_anomaly(True)
+    #torch.autograd.set_detect_anomaly(True)
     # Total num it: num_its x batch_size x training examples
     for it in it_bar:
         #it_bar.set_description("Training Iteration")
@@ -145,10 +150,10 @@ def train(args, model, device, train_sampler, optimizer, writer, epoch):
                 quantization_loss = model.quantization_loss()
                 entropy_avg  = model.get_overall_entropy_avg()
 
-            total_loss = ((mse_loss * args.loss_weights[0]) +\
-                          (quantization_loss * args.loss_weights[1]) +\
-                          (entropy_loss * args.loss_weights[2]))
-            total_loss.backward(retain_graph=True)
+            total_loss = ((mse_loss * loss_weights[0]) +\
+                          (quantization_loss * loss_weights[1]) +\
+                          (entropy_loss * loss_weights[2]))
+            total_loss.backward()
             optimizer.step()
 
             mse_losses.update(mse_loss.item())
@@ -161,11 +166,8 @@ def train(args, model, device, train_sampler, optimizer, writer, epoch):
             print("quantization loss:",quantization_loss)
             print("mse loss:",mse_loss)
             print("entropy avg:",entropy_avg)
-            print("bitrate avg:",utils.entropy_to_bitrate(entropy_avg,
-                                                        args.sample_rate,
-                                                        args.seq_dur,
-                                                        args.overlap,
-                                                        [24, 512]))
+            print("entropy target:",model.target_entropy)
+            print("entropy fuzz:",model.entropy_fuzz)
 
     return mse_losses.avg, entropy_losses.avg, quantization_losses.avg, total_losses.avg, entropy_avg
 
@@ -191,9 +193,9 @@ def valid(args, model, device, valid_sampler, writer, epoch):
                 entropy_loss = model.entropy_loss()
                 quantization_loss = model.quantization_loss()
 
-            total_loss = ((mse_loss * args.loss_weights[0]) +\
-                          (quantization_loss * args.loss_weights[1]) +\
-                          (entropy_loss * args.loss_weights[2]))
+            total_loss = ((mse_loss * loss_weights[0]) +\
+                          (quantization_loss * loss_weights[1]) +\
+                          (entropy_loss * loss_weights[2]))
 
             mse_losses.update(mse_loss.item())
             entropy_losses.update(entropy_loss.item())
@@ -207,7 +209,7 @@ def valid(args, model, device, valid_sampler, writer, epoch):
 use_cuda = torch.cuda.is_available()
 device = torch.device(args.device if use_cuda else "cpu")
 print("Using GPU:", use_cuda)
-dataloader_kwargs = {'num_workers': args.nb_workers, 'pin_memory': True} if use_cuda else {}
+#dataloader_kwargs = {'num_workers': args.nb_workers, 'pin_memory': True} if use_cuda else {}
 
 torch.manual_seed(args.seed)
 random.seed(args.seed)
@@ -225,43 +227,40 @@ utils.dataset_items_to_csv(path=os.path.join(args.output,args.model+"/"+args.exp
 utils.dataset_items_to_csv(path=os.path.join(args.output,args.model+"/"+args.experiment_id+"/"+"val_set.csv"),items=vPaths)
 
 train_sampler = torch.utils.data.DataLoader(
-    train_dataset, batch_size=args.batch_size, shuffle=True, drop_last=True,
-    **dataloader_kwargs
+    train_dataset, batch_size=args.batch_size, shuffle=True, drop_last=True,#**dataloader_kwargs
 )
 
 valid_sampler = torch.utils.data.DataLoader(
-    valid_dataset, batch_size=1, drop_last=True,
-    **dataloader_kwargs
+    valid_dataset, batch_size=1, drop_last=True#,**dataloader_kwargs
 )
 
 
 model = models.Waveunet(
     n_ch=args.nb_channels,
     model=utils.model_dic[args.model],
-    target_entropy=utils.bitrate_to_entropy(args.target_bitrate,\
-                                            args.sample_rate,\
-                                            args.seq_dur,\
-                                            args.overlap,\
-                                            [24, 512]),
-    entropy_fuzz=utils.bitrate_to_entropy(args.bitrate_fuzz,\
-                                        args.sample_rate,\
-                                        args.seq_dur,\
-                                        args.overlap,\
-                                        [24, 512]))
-
+    num_skips=args.num_skips)
+model.set_network_entropy_target(args.target_bitrate,\
+                                args.bitrate_fuzz,\
+                                args.sample_rate,\
+                                args.seq_dur,\
+                                args.overlap)
 writer = SummaryWriter(log_dir)
 summary(model,(args.nb_channels,args.seq_dur),device='cpu')
 print("Model loaded with num. param:", sum(p.numel() for p in model.parameters() if p.requires_grad))
 for name, param in model.named_parameters():
     if param.requires_grad and 'quant' in name:
         print(name, param.data)
+        
+print("entropy target:",model.target_entropy)
 
 model.to(device)
+loss_weights = torch.FloatTensor(args.loss_weights).to(device)
 
 optimizer = torch.optim.Adam(
     model.parameters(),
     lr=args.lr
 )
+
 
 # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
 #     optimizer,
@@ -283,10 +282,10 @@ for epoch in t:
     t.set_description("Training Epoch")
     end = time.time()
     print("epoch:",epoch,"\nexperiment:",args.experiment_id,"\nmessage:",args.message)
-    if epoch == args.quant_active:
-        model.quant_active = True
-        for m in model.skip_encoders:
-            m.quant_active = True
+    # if epoch == args.quant_active:
+    #     model.quant_active = True
+    #     for m in model.skip_encoders:
+    #         m.quant_active = True
 
     mse_train_loss, ent_train_loss, quant_train_loss, train_loss, entropy_avg = train(args,
                                                                                         model,
@@ -305,7 +304,18 @@ for epoch in t:
     train_losses.append(train_loss)
     valid_losses.append(valid_loss)
 
-    writer.add_scalar("lr", optimizer.param_groups[0]["lr"], epoch)
+    print('mse_train_loss', mse_train_loss)
+    print('mse_val_loss', mse_val_loss)
+    print('ent_train_loss', ent_train_loss)
+    print('ent_val_loss', ent_val_loss)
+    print('quant_train_loss', quant_train_loss)
+    print('quant_valid_loss', quant_valid_loss)
+    print('train_loss', train_loss)
+    print('valid_loss', valid_loss)
+    print('entropy_avg', entropy_avg)
+    print('quant_bins', model.state_dict()['quant_bins'].clone().cpu().data.numpy())
+    print('quant_alpha', model.state_dict()['quant_alpha'].clone().cpu().data)
+
     writer.add_scalar("mse_train_loss", mse_train_loss, epoch)
     writer.add_scalar("mse_valid_loss", mse_val_loss, epoch)
     writer.add_scalar("entropy_train_loss", ent_train_loss, epoch)
@@ -359,10 +369,10 @@ for epoch in t:
     train_times.append(time.time() - end)
 
     # Save audio example every 10 epochs
-    if epoch%10 == 0:
-        x_test, y_test = evaluate.make_an_experiment(model_name=args.model, model_id=args.experiment_id)
-        writer.add_audio("x", x_test.permute(1,0).detach().numpy(), epoch, sample_rate=args.sample_rate)
-        writer.add_audio("y", y_test.permute(1,0).detach().numpy(), epoch, sample_rate=args.sample_rate)
+    # if epoch%10 == 0:
+    #     x_test, y_test = evaluate.make_an_experiment(model_name=args.model, model_id=args.experiment_id)
+    #     writer.add_audio("x", x_test.permute(1,0).detach().numpy(), epoch, sample_rate=args.sample_rate)
+    #     writer.add_audio("y", y_test.permute(1,0).detach().numpy(), epoch, sample_rate=args.sample_rate)
 
     if stop:
         print("Apply Early Stopping")

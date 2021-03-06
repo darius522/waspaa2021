@@ -7,6 +7,9 @@ import json
 from matplotlib import pyplot as plt
 import torch.nn as nn
 
+import torchaudio
+import soundfile
+
 from scipy.interpolate import interp1d
 from enum import Enum
 
@@ -101,11 +104,9 @@ def get_info_backend():
         return soundfile_info
 
 def soundfile_writer(path, audio, sr):
-    import soundfile
     soundfile.write(path, audio, sr)
 
 def soundfile_info(path):
-    import soundfile
     info = {}
     sfi = soundfile.info(path)
     info['samplerate'] = sfi.samplerate
@@ -115,7 +116,6 @@ def soundfile_info(path):
 
 
 def soundfile_loader(path, start=0, dur=None):
-    import soundfile
     # get metadata
     # check if dur is none
     if dur:
@@ -135,7 +135,6 @@ def soundfile_loader(path, start=0, dur=None):
 
 
 def torchaudio_info(path):
-    import torchaudio
     # get length of file in samples
     info = {}
     si, _ = torchaudio.info(str(path))
@@ -146,7 +145,6 @@ def torchaudio_info(path):
 
 
 def torchaudio_loader(path, start=0, dur=None):
-    import torchaudio
     info = torchaudio_info(path)
     # loads the full track duration
     if dur is None:
@@ -168,7 +166,6 @@ def load_info(path):
 
 
 def load_audio(path, start=0, dur=None, sr=44100):
-    import torchaudio
     loader = get_loading_backend()
     audio, fs = loader(path, start=start, dur=dur)
     if not fs == sr:

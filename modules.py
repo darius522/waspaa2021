@@ -46,6 +46,7 @@ class SkipEncoding(nn.Module):
         self.leaky = nn.LeakyReLU(negative_slope=0.2)
         self.ds    = Downsample()
         self.us    = nn.Upsample(scale_factor=2, mode='linear',align_corners=True)
+        self.bottleneck_dims = []
 
         # Quant
         self.quant = None
@@ -70,13 +71,13 @@ class SkipEncoding(nn.Module):
             
             self.dec_num_filt.append(self.out_channels)
 
-        bottleneck_shape = (int(self.W + (self.W_layer * self.num_layers)), int(self.H / (2 ** self.num_layers)))
+        self.bottleneck_dims = (int(self.W + (self.W_layer * self.num_layers)), int(self.H / (2 ** self.num_layers)))
         self.quant = ScalarSoftmaxQuantization(
             bins = self.quant_bins,
             alpha = self.quant_alpha,
-            code_length = bottleneck_shape[1],
+            code_length = self.bottleneck_dims[1],
             num_kmean_kernels = self.quant_bins.shape[0],
-            feat_maps = bottleneck_shape[0],
+            feat_maps = self.bottleneck_dims[0],
             module_name = module_name
         )
 
@@ -86,7 +87,7 @@ class SkipEncoding(nn.Module):
             self.out_channels = self.dec_num_filt[-layer-1] - self.W_layer # if (layer == num_layers-1) else self.dec_num_filt[-layer-1]
             self.in_channels = self.dec_num_filt[-layer-1]
 
-            self.dec_conv.append(nn.Conv1d(
+            self.dec_conv.append(nn.ConvTranspose1d(
                 in_channels=self.in_channels,
                 out_channels=self.out_channels,
                 kernel_size=self.kernel_size_up,
@@ -95,7 +96,7 @@ class SkipEncoding(nn.Module):
             
             self.bn_dec.append(BatchNorm1d(self.out_channels))
 
-    def forward(self, x):
+    def forward_skip(self, x):
 
         weighted_code_entropy = torch.zeros(1,2,dtype=torch.float)
         quant_loss = torch.zeros(1,dtype=torch.float)
@@ -112,7 +113,7 @@ class SkipEncoding(nn.Module):
         # x = self.conv_bottleneck(x)
         # x = self.bn_enc[-1](x)
         if self.quant_active:
-            x, code_entropy, quant_loss = self.quant(x)
+            x, code_entropy, quant_loss = self.quant.forward_q(x)
             weighted_code_entropy = code_entropy
 
         # Decoding Path
@@ -147,10 +148,11 @@ class ScalarSoftmaxQuantization(nn.Module):
 
         # Entropy control
         self.code_entropy = 0
-        self.tau = 0.5
-        self.entropy_avg = losses = utils.AverageMeter()
+        self.tau  = 1.0
+        self.tau2 = 1.0
+        self.entropy_avg = utils.AverageMeter()
     
-    def forward(self, x):
+    def forward_q(self, x):
 
         '''
         x = [batch_size, feature_maps, floating_code] // [-1, 21, 256]
@@ -160,7 +162,7 @@ class ScalarSoftmaxQuantization(nn.Module):
 
         input_size = x.size()
         weighted_code_entropy = torch.zeros(1,2,dtype=torch.float)
-        quant_loss = torch.zeros(1,dtype=torch.float)
+        weighted_quant_loss   = torch.zeros(1,2,dtype=torch.float)
 
         x = torch.unsqueeze(x, len(x.size()))
         floating_code = x.expand(input_size[0],self.feat_maps,self.code_length,self.num_kmean_kernels)
@@ -178,7 +180,11 @@ class ScalarSoftmaxQuantization(nn.Module):
             assignment = hard_assignment
         else:
             assignment = soft_assignment
-            p = torch.mean(soft_assignment,dim=(0,1,2))
+            # Quantization regularization term, prevent alpha from getting to big
+            weighted_quant_loss[:,0] = torch.sum(torch.mean(torch.sqrt(assignment),(0,1,2)))
+            weighted_quant_loss[:,1] = self.tau2
+
+            p = torch.mean(assignment,dim=(0,1,2))
             # q = torch.histc(floating_code,bins=self.num_kmean_kernels)
             # q /= torch.sum(q)
             # Compute entropy loss
@@ -188,10 +194,7 @@ class ScalarSoftmaxQuantization(nn.Module):
             # Weighted entropy regularization term
             weighted_code_entropy[:,0] = self.code_entropy
             weighted_code_entropy[:,1] = self.tau
-
-            # Quantization regularization term, prevent alpha from getting to big
-            quant_loss = torch.mean(torch.sqrt(assignment))
-            
+                
         bit_code = torch.matmul(assignment,self.bins)
         
-        return bit_code, weighted_code_entropy, quant_loss
+        return bit_code, weighted_code_entropy, weighted_quant_loss

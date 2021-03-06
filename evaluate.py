@@ -45,11 +45,13 @@ def load_model(
 ):
 
     model_path = os.path.join(args.main_dir,model_name+'/'+model_id)
+    print(model_path)
     # load model from disk
     with open(Path(model_path, model_id + '.json'), 'r') as stream:
         results = json.load(stream)
 
     model_path = next(Path(model_path).glob("%s*.pth" % model_id))
+    print(model_path)
     state = torch.load(
         model_path,
         map_location=device
@@ -159,9 +161,9 @@ def make_an_experiment(model_name='',model_id=''):
 
     testPaths = [path for sublist in testPaths for path in sublist]
 
-    randPath = testPaths[random.randint(0,len(testPaths)-1)]
+    randPath = "../../../media/sdb1/Data/ETRI_Music/1879-00001-CFD.wav"#testPaths[random.randint(0,len(testPaths)-1)]
     audio = utils.load_audio(randPath, start=0, dur=None, sr=args.sample_rate)
-
+    print(randPath)
     if args.nb_channels == 1:
         audio_mono = torch.clone(torch.mean(audio, axis=0, keepdim=True))
     
@@ -182,4 +184,4 @@ def make_an_experiment(model_name='',model_id=''):
 
     return x, y
 
-#make_an_experiment(model_name='waveunet_no_skip',model_id='208658')
+make_an_experiment(model_name='waveunet_no_skip',model_id='735196')
