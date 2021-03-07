@@ -146,6 +146,10 @@ def inference(
 
     y = overlap_add(y_tmp_2,timestamps,device=device)
 
+    fig, (ax1, ax2) = plt.subplots(1, 2)
+    ax1.plot(y_tmp[10,:].cpu().permute(1,0).detach().numpy())
+    ax1.title.set_text('X snip')
+    plt.savefig(os.path.join(args.main_dir,model_name+'/'+model_id+'/test''.png'))
 
     return x_new, y
 
@@ -170,18 +174,18 @@ def make_an_experiment(model_name='',model_id=''):
     x, y = inference(model_name=model_name,model_id=model_id,audio=audio_mono,device=device)
 
     fig, (ax1, ax2) = plt.subplots(1, 2)
-    ax1.hist(audio_mono.cpu().permute(1,0).detach().numpy(),bins='auto')
-    ax1.title.set_text('X sample distribution')
-    ax2.hist(y.cpu().permute(1,0).detach().numpy(),bins='auto')
-    ax2.title.set_text('Y sample distribution')
+    ax1.plot(audio_mono.cpu().permute(1,0).detach().numpy())
+    ax1.title.set_text('X')
+    ax2.plot(y.cpu().permute(1,0).detach().numpy())
+    ax2.title.set_text('Y')
     fig.tight_layout()
-    plt.savefig(os.path.join(args.main_dir,model_name+'/'+model_id+'/'+'sample_entropy'+str(args.overlap)+'.png'))
+    plt.savefig(os.path.join(args.main_dir,model_name+'/'+model_id+'/'+str(args.overlap)+'.png'))
 
-    #print(np.unique(y.cpu().permute(1,0).detach().numpy(), return_counts=True))
+    print(np.unique(y.cpu().permute(1,0).detach().numpy(), return_counts=True))
 
     utils.soundfile_writer(os.path.join(args.main_dir,model_name+'/'+model_id+'/'+'x'+str(args.overlap)+'.wav'), x.cpu().permute(1,0).detach().numpy(), 44100)
     utils.soundfile_writer(os.path.join(args.main_dir,model_name+'/'+model_id+'/'+'y'+str(args.overlap)+'.wav'), y.cpu().permute(1,0).detach().numpy(), 44100)
 
     return x, y
 
-make_an_experiment(model_name='waveunet_no_skip',model_id='735196')
+make_an_experiment(model_name='waveunet_no_skip',model_id='768690')

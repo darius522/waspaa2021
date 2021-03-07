@@ -1,6 +1,6 @@
 import os
 os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"]="6"  # specify which GPU(s) to be used
+os.environ["CUDA_VISIBLE_DEVICES"]="7"  # specify which GPU(s) to be used
 
 import torch
 import torch.nn as nn
@@ -49,7 +49,7 @@ parser.add_argument('--message', type=str, default='layer=5, \
                                                     w=4, \
                                                     num_bins=32, \
                                                     entropy_target=64kbps, \
-                                                    summary: tau = 1.0, tau2 = 1.0, tau_change = 0.125 (up and down), tau_change2 = 0.250 (up), loss: soft-assignment/quant/mse [70.0, 5.0, 10.0], alpha: -20, transpConv')
+                                                    summary: W=24, layers=11')
 
 # Dataset paramaters
 parser.add_argument('--root', type=str, default=rootPath, help='root path of dataset')
@@ -281,7 +281,7 @@ for epoch in t:
 
     t.set_description("Training Epoch")
     end = time.time()
-    print("epoch:",epoch,"\nexperiment:",args.experiment_id,"\nmessage:",args.message)
+    print("epoch:",epoch,"\nexperiment:",args.experiment_id,"\nmessage:",args.message,"\bottleneck:",model.bottleneck_dims)
     # if epoch == args.quant_active:
     #     model.quant_active = True
     #     for m in model.skip_encoders:

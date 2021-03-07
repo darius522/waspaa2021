@@ -11,7 +11,7 @@ import utils
 class Waveunet(nn.Module):
 
     def __init__(self,
-        W = 4,
+        W = 8,
         H = 16384,
         n_ch = 1,
         num_layers = 5,
@@ -124,13 +124,9 @@ class Waveunet(nn.Module):
                 quant_alpha=self.quant_alpha,
                 module_name='layer skip '+str(layer+1)))
 
-            self.dec_conv.append(nn.ConvTranspose1d(
+            self.dec_conv.append(modules.SubPixelResolution(
                 in_channels=self.in_channels,
-                out_channels=self.out_channels,
-                kernel_size=self.kernel_size_up,
-                padding=(self.kernel_size_up // 2),
-                stride=self.stride
-                ))
+                out_channels=self.out_channels))
             
             self.bn_dec.append(BatchNorm1d(self.out_channels))
         
@@ -146,9 +142,7 @@ class Waveunet(nn.Module):
         self.dec_conv.append(nn.Conv1d(
             in_channels=last_conv_in,
             out_channels=self.channel,
-            kernel_size=1,
-            padding=0,
-            stride=1)
+            kernel_size=1)
             )
 
     def forward(self,x):
@@ -189,7 +183,7 @@ class Waveunet(nn.Module):
         # Decoding Path
         for layer in range(self.num_layers):
             # Upsample and Concatenate
-            x = self.us(x)
+            #x = self.us(x)
             # If model uses skip connection (either encoded or identity)
             if not self.model == Model.waveunet_no_skip:
                 if (layer <= self.num_skips-1):

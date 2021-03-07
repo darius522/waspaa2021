@@ -7,6 +7,22 @@ import utils
 
 from random import randrange
 
+class SubPixelResolution(nn.Module):
+    def __init__(self, in_channels, out_channels,upscaler=2):
+        super().__init__()
+        self.upscaler = upscaler
+        self.conv1d = Conv1d(in_channels=in_channels, out_channels=out_channels*4, kernel_size=1)
+        self.ps = nn.PixelShuffle(self.upscaler)
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+
+    def forward(self, x):
+        x = self.conv1d(x)
+        x = torch.unsqueeze(x,-1)
+        x = self.ps(x)
+        
+        return x[:,:,:,0]
+
 class Downsample(nn.Module):
     def __init__(self):
         super().__init__()
