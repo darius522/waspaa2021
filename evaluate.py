@@ -147,7 +147,7 @@ def evaluate_model(model_name='',model_id=''):
     device = torch.device(args.device if use_cuda else "cpu")
     print("Using GPU:", use_cuda)
 
-    with open('./data/test_set.csv'), newline='') as f:
+    with open('./data/test_set.csv', newline='') as f:
         reader = csv.reader(f)
         testPaths = list(reader)
 
