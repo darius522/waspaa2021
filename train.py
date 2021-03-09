@@ -43,15 +43,15 @@ experiment_id = np.random.randint(0,1000000)
 parser = argparse.ArgumentParser(description='Trainer')
 
 parser.add_argument('--experiment-id', type=str, default=str(experiment_id))
-parser.add_argument('--model', type=str, default="waveunet_enc_skip")
+parser.add_argument('--model', type=str, default="waveunet_no_skip")
 parser.add_argument('--load-ckpt', type=str, default='558920')
-parser.add_argument('--message', type=str, default='layer=5, \
+parser.add_argument('--message', type=str, default='layer=8, \
                                                     w=24, \
                                                     num_bins=32, \
                                                     entropy_target=64kbps, \
                                                     alpha=-20, \
                                                     loss weights=[70.0, 1.0, 10.0],\
-                                                    summary: One AE skip')
+                                                    summary: No skip')
 
 # Dataset paramaters
 parser.add_argument('--root', type=str, default=rootPath, help='root path of dataset')
