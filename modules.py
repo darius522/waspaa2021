@@ -32,7 +32,7 @@ class Downsample(nn.Module):
 
 class SkipEncoding(nn.Module):
     def __init__(self,         
-        W_layer = 12, # maps per layer
+        W_layer = 24, # maps per layer
         W = 24, # input maps
         H = 16384, # input samples
         num_layers = 3 ,
@@ -73,8 +73,8 @@ class SkipEncoding(nn.Module):
         # Encoding Path
         for layer in range(num_layers):
 
-            self.out_channels = self.W + (self.W_layer * (layer+1))
-            self.in_channels  = self.out_channels - self.W_layer
+            self.out_channels = self.W_layer
+            self.in_channels  = self.W_layer if layer > 0 else self.W
 
             self.enc_conv.append(nn.Conv1d(
                 in_channels=self.in_channels,
@@ -87,7 +87,18 @@ class SkipEncoding(nn.Module):
             
             self.dec_num_filt.append(self.out_channels)
 
-        self.bottleneck_dims = (int(self.W + (self.W_layer * self.num_layers)), int(self.H / (2 ** self.num_layers)))
+        # Bottleneck
+        self.conv_bottleneck = Conv1d(
+            in_channels=self.W_layer,
+            out_channels=1,
+            kernel_size=self.kernel_size_up,
+            padding=(self.kernel_size_up // 2),
+            stride=self.stride
+            )
+
+        self.bn_enc.append(BatchNorm1d(1))
+
+        self.bottleneck_dims = (1, self.H)
         self.quant = ScalarSoftmaxQuantization(
             bins = self.quant_bins,
             alpha = self.quant_alpha,
@@ -100,8 +111,8 @@ class SkipEncoding(nn.Module):
         # Decoding Path
         for layer in range(num_layers):
 
-            self.out_channels = self.dec_num_filt[-layer-1] - self.W_layer # if (layer == num_layers-1) else self.dec_num_filt[-layer-1]
-            self.in_channels = self.dec_num_filt[-layer-1]
+            self.out_channels = self.W_layer
+            self.in_channels  = self.W_layer if layer > 0 else 1
 
             self.dec_conv.append(nn.ConvTranspose1d(
                 in_channels=self.in_channels,
@@ -123,20 +134,16 @@ class SkipEncoding(nn.Module):
             x = self.enc_conv[layer](x)
             x = self.bn_enc[layer](x)
             x = self.leaky(x)
-            x = self.ds(x)
 
         # # Bottleneck
-        # x = self.conv_bottleneck(x)
-        # x = self.bn_enc[-1](x)
+        x = self.conv_bottleneck(x)
+        x = self.bn_enc[-1](x)
         if self.quant_active:
             x, code_entropy, quant_loss = self.quant.forward_q(x)
             weighted_code_entropy = code_entropy
 
         # Decoding Path
         for layer in range(self.num_layers):
-
-            # Upsample and Concatenate
-            x = self.us(x)
 
             x = self.dec_conv[layer](x)
             x = self.bn_dec[layer](x)
@@ -164,8 +171,8 @@ class ScalarSoftmaxQuantization(nn.Module):
 
         # Entropy control
         self.code_entropy = 0
-        self.tau  = 1.0
-        self.tau2 = 1.0
+        self.tau  = 0
+        self.tau2 = 0
         self.entropy_avg = utils.AverageMeter()
     
     def forward_q(self, x):
@@ -195,7 +202,8 @@ class ScalarSoftmaxQuantization(nn.Module):
             hard_assignment = hard_assignment.type(torch.float)
             assignment = hard_assignment
         else:
-            assignment = soft_assignment
+            assignment = soft_assignment + 1e-10
+
             # Quantization regularization term, prevent alpha from getting to big
             weighted_quant_loss[:,0] = torch.sum(torch.mean(torch.sqrt(assignment),(0,1,2)))
             weighted_quant_loss[:,1] = self.tau2

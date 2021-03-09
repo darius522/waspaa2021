@@ -11,7 +11,7 @@ import utils
 class Waveunet(nn.Module):
 
     def __init__(self,
-        W = 8,
+        W = 24,
         H = 16384,
         n_ch = 1,
         num_layers = 5,
@@ -35,7 +35,6 @@ class Waveunet(nn.Module):
         self.bn_dec        = nn.ModuleList()
         self.skip_encoders = nn.ModuleList()
         self.skip          = []
-        self.dec_num_filt  = []
         self.W             = W
         self.H             = H
         self.channel       = n_ch
@@ -63,15 +62,15 @@ class Waveunet(nn.Module):
         # Entropy
         self.target_entropy = -1
         self.entropy_fuzz   = -1
-        self.tau_change     = 0.125
+        self.tau_change     = 0.005
         self.code_entropies = torch.zeros(1,2,dtype=torch.float)
         self.quant_losses   = torch.zeros(1,2,dtype=torch.float)
         
         # Encoding Path
         for layer in range(num_layers):
 
-            self.out_channels = self.W + (self.W * layer)
-            self.in_channels  = self.channel if layer == 0 else self.out_channels - self.W
+            self.out_channels = self.W
+            self.in_channels  = self.W if layer > 0 else 1
 
             self.enc_conv.append(nn.Conv1d(
                 in_channels=self.in_channels,
@@ -83,20 +82,18 @@ class Waveunet(nn.Module):
             
             self.bn_enc.append(BatchNorm1d(self.out_channels))
             
-            self.dec_num_filt.append(self.out_channels)
-
         # Bottleneck
         self.conv_bottleneck = Conv1d(
-            in_channels=self.out_channels,
-            out_channels=self.out_channels+self.W,
+            in_channels=self.W,
+            out_channels=1,
             kernel_size=self.kernel_size_up,
             padding=(self.kernel_size_up // 2),
             stride=self.stride
             )
 
-        self.bn_enc.append(BatchNorm1d(self.out_channels+self.W))
+        self.bn_enc.append(BatchNorm1d(1))
 
-        self.bottleneck_dims = (int(self.W * (self.num_layers + 1)), int(self.H / (2 ** self.num_layers)))
+        self.bottleneck_dims = (1, self.H)
         self.quant = modules.ScalarSoftmaxQuantization(
             bins = self.quant_bins,
             alpha = self.quant_alpha,
@@ -109,38 +106,33 @@ class Waveunet(nn.Module):
         # Decoding Path
         for layer in range(num_layers):
 
-            self.out_channels = self.dec_num_filt[-layer-1]
-            if self.model == Model.waveunet_no_skip or layer > self.num_skips-1:
-                self.in_channels = self.out_channels + self.W
-            else:
-                self.in_channels = self.dec_num_filt[-layer-1] * 2 + self.W
+            self.out_channels = self.W
+            if layer == 0: self.in_channels = 1
+            elif layer > 0 and layer <= self.num_skips: self.in_channels = self.W * 2
+            else: self.in_channels = self.W
             
             # If enc skip model, store intermediate AEs
             if self.model == Model.waveunet_enc_skip and (layer <= self.num_skips-1):
                 self.skip_encoders.append(modules.SkipEncoding(
-                W=self.dec_num_filt[-layer-1], 
-                H=self.bottleneck_dims[1] * (2 **(layer+1)),
-                quant_bins=self.quant_bins,
-                quant_alpha=self.quant_alpha,
-                module_name='layer skip '+str(layer+1)))
-
-            self.dec_conv.append(modules.SubPixelResolution(
-                in_channels=self.in_channels,
-                out_channels=self.out_channels))
-            
-            self.bn_dec.append(BatchNorm1d(self.out_channels))
-        
-        # If enc skip model, store input autoencoder
-        if self.model == Model.waveunet_enc_skip:
-                self.skip_encoders.append(modules.SkipEncoding(W=self.channel, 
+                W=self.W, 
+                W_layer=self.W,
                 H=self.H,
                 quant_bins=self.quant_bins,
                 quant_alpha=self.quant_alpha,
                 module_name='layer skip '+str(layer+1)))
+
+            self.dec_conv.append(nn.Conv1d(
+                in_channels=self.in_channels,
+                out_channels=self.out_channels,
+                kernel_size=self.kernel_size_down,
+                padding=(self.kernel_size_down // 2),
+                stride=self.stride)
+                )
+            
+            self.bn_dec.append(BatchNorm1d(self.out_channels))
         
-        last_conv_in = self.W if (self.model == Model.waveunet_no_skip or self.num_skips < self.num_layers+1) else self.W + self.channel
         self.dec_conv.append(nn.Conv1d(
-            in_channels=last_conv_in,
+            in_channels=self.W,
             out_channels=self.channel,
             kernel_size=1)
             )
@@ -164,11 +156,9 @@ class Waveunet(nn.Module):
             x = self.bn_enc[layer](x)
             x = self.leaky(x)
 
-            # Save skip connection for decoding path and downsample
+            # Save skip connection for decoding path
             if not self.model == Model.waveunet_no_skip and (layer >= (self.num_layers - self.num_skips)):
                 self.skip.append(x)
-
-            x = self.ds(x)
 
         # Bottleneck
         x = self.conv_bottleneck(x)
@@ -182,35 +172,27 @@ class Waveunet(nn.Module):
 
         # Decoding Path
         for layer in range(self.num_layers):
-            # Upsample and Concatenate
-            #x = self.us(x)
-            # If model uses skip connection (either encoded or identity)
-            if not self.model == Model.waveunet_no_skip:
-                if (layer <= self.num_skips-1):
-                    # Identity skip
-                    if self.model == Model.waveunet_skip:
-                        skip_layer = self.skip[-layer-1]
-                    # Encoded skip
-                    elif self.model == Model.waveunet_enc_skip:
-                        skip_layer, skip_entropy, skip_quant_loss = self.skip_encoders[layer].forward_skip(self.skip[-layer-1])
-                        if self.quant_active:
-                            self.code_entropies = torch.cat((self.code_entropies,skip_entropy))
-                            self.quant_losses = torch.cat((self.quant_losses,skip_quant_loss))
-                            
-                    x = torch.cat((x, skip_layer), 1)
 
             x = self.dec_conv[layer](x)
             x = self.bn_dec[layer](x)
             x = self.leaky(x)
+            # If model uses skip connection (either encoded or identity)
+            if self.model == Model.waveunet_enc_skip and layer <= self.num_skips-1:
+                skip_layer, skip_entropy, skip_quant_loss = self.skip_encoders[layer].forward_skip(self.skip[-layer-1])
+                if self.quant_active:
+                    self.code_entropies = torch.cat((self.code_entropies,skip_entropy))
+                    self.quant_losses = torch.cat((self.quant_losses,skip_quant_loss))
+
+                x = torch.cat((x, skip_layer), 1)
+
 
         # Final concatenation with original input, 1x1 convolution, and tanh output
-        if not self.model == Model.waveunet_no_skip:
-            if self.model == Model.waveunet_enc_skip and self.num_skips == self.num_layers+1:
-                inputs, input_entropy, input_quant_loss = self.skip_encoders.forward_skip[-1](inputs)
-                if self.quant_active:
-                    self.code_entropies = torch.cat((self.code_entropies,input_entropy))
-                    self.quant_losses = torch.cat((self.quant_losses,input_quant_loss))
-                x = torch.cat((x, inputs), 1)
+        if self.model == Model.waveunet_enc_skip and self.num_skips == self.num_layers+1:
+            inputs, input_entropy, input_quant_loss = self.skip_encoders.forward_skip[-1](inputs)
+            if self.quant_active:
+                self.code_entropies = torch.cat((self.code_entropies,input_entropy))
+                self.quant_losses = torch.cat((self.quant_losses,input_quant_loss))
+            x = torch.cat((x, inputs), 1)
 
         x = self.dec_conv[-1](x)
         y = self.tanh(x)
@@ -230,20 +212,21 @@ class Waveunet(nn.Module):
             if (self.quant.tau < 0): self.quant.tau = 0.0
             if (self.quant.tau2 < 0): self.quant.tau2 = 0.0
         elif entropy > (self.target_entropy + self.entropy_fuzz):
-            self.quant.tau += self.tau_change
-        else:
+            #self.quant.tau += self.tau_change / 2
+            # When within acceptable window, make quant loss (alpha) kick in
             self.quant.tau2 += self.tau_change
 
         if self.model == Model.waveunet_enc_skip:
             for skip in self.skip_encoders:
+                # Get skip quant
                 if (entropy < (self.target_entropy - self.entropy_fuzz)):
                     skip.quant.tau -= self.tau_change
                     skip.quant.tau2 -= (self.tau_change * 2)
                     if (skip.quant.tau < 0): skip.quant.tau = 0.0
                     if (skip.quant.tau2 < 0): skip.quant.tau2 = 0.0
                 elif entropy > (self.target_entropy + self.entropy_fuzz):
-                    skip.quant.tau += self.tau_change
-                else:
+                    #self.quant.tau += self.tau_change / 2
+                    # When within acceptable window, make quant loss (alpha) kick in
                     skip.quant.tau2 += self.tau_change
         
         self.reset_entropy_hists()

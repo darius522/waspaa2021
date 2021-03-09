@@ -1,6 +1,6 @@
 import os
 os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"]="7"  # specify which GPU(s) to be used
+os.environ["CUDA_VISIBLE_DEVICES"]="6"  # specify which GPU(s) to be used
 
 import torch
 import torch.nn as nn
@@ -43,13 +43,15 @@ experiment_id = np.random.randint(0,1000000)
 parser = argparse.ArgumentParser(description='Trainer')
 
 parser.add_argument('--experiment-id', type=str, default=str(experiment_id))
-parser.add_argument('--model', type=str, default="waveunet_no_skip")
+parser.add_argument('--model', type=str, default="waveunet_enc_skip")
 parser.add_argument('--load-ckpt', type=str, default='558920')
 parser.add_argument('--message', type=str, default='layer=5, \
-                                                    w=4, \
+                                                    w=24, \
                                                     num_bins=32, \
                                                     entropy_target=64kbps, \
-                                                    summary: W=24, layers=11')
+                                                    alpha=-20, \
+                                                    loss weights=[70.0, 1.0, 10.0],\
+                                                    summary: One AE skip')
 
 # Dataset paramaters
 parser.add_argument('--root', type=str, default=rootPath, help='root path of dataset')
@@ -64,13 +66,13 @@ parser.add_argument('--batch-size', type=int, default=16)
 # Hyper-parameters
 # Quant/Entropy
 parser.add_argument('--quant', type=bool, default=False)
-parser.add_argument('--quant-active', type=int, default=7)
+parser.add_argument('--quant-active', type=int, default=5)
 parser.add_argument('--target-bitrate', type=int, default=64000,
                     help='target bitrate. by default the bitrate of 44.1 mono audio = 705,600')
 parser.add_argument('--bitrate-fuzz', type=int, default=450,
                     help='amount of bitrate fuzz allowed around the target bitrate before adjusting tau')
 
-parser.add_argument('--loss-weights', type=list, default=[70.0, 5.0, 10.0],
+parser.add_argument('--loss-weights', type=list, default=[70.0, 1.0, 10.0],
                     help='weight of each loss term: [mse,quant,entropy]')
 parser.add_argument('--num-skips', type=list, default=1)
 
@@ -282,10 +284,11 @@ for epoch in t:
     t.set_description("Training Epoch")
     end = time.time()
     print("epoch:",epoch,"\nexperiment:",args.experiment_id,"\nmessage:",args.message,"\bottleneck:",model.bottleneck_dims)
-    # if epoch == args.quant_active:
-    #     model.quant_active = True
-    #     for m in model.skip_encoders:
-    #         m.quant_active = True
+    if epoch == args.quant_active:
+        print('quant active')
+        model.quant_active = True
+        for m in model.skip_encoders:
+            m.quant_active = True
 
     mse_train_loss, ent_train_loss, quant_train_loss, train_loss, entropy_avg = train(args,
                                                                                         model,
