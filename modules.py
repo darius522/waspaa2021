@@ -69,6 +69,8 @@ class SkipEncoding(nn.Module):
         self.quant_active = False
         self.quant_bins = quant_bins
         self.quant_alpha = quant_alpha
+        print('skip, bins:',self.quant_bins.data_ptr)
+        print('skip, alpha:',self.quant_alpha.data_ptr)
 
         # Encoding Path
         for layer in range(num_layers):
@@ -141,6 +143,7 @@ class SkipEncoding(nn.Module):
         if self.quant_active:
             x, code_entropy, quant_loss = self.quant.forward_q(x)
             weighted_code_entropy = code_entropy
+        x = self.leaky(x)
 
         # Decoding Path
         for layer in range(self.num_layers):

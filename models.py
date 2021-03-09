@@ -54,15 +54,17 @@ class Waveunet(nn.Module):
         self.quant = None
         self.quant_active = False
         self.quant_num_bins = quant_num_bins
-        self.quant_alpha = torch.nn.Parameter(torch.tensor(-20.0, dtype=torch.float32), requires_grad=True)
+        self.quant_alpha = torch.nn.Parameter(torch.tensor(-40.0, dtype=torch.float32), requires_grad=True)
         self.register_parameter(name='alpha', param=(self.quant_alpha))
         self.quant_bins = torch.nn.Parameter(torch.rand(self.quant_num_bins, requires_grad=True) * (-1.6) + 0.8, requires_grad=True)
         self.register_parameter(name='bins', param=(self.quant_bins))
         self.quant_losses = torch.zeros(1,dtype=torch.float)
+        print('waveunet, bins:',self.quant_bins.data_ptr)
+        print('waveunet, alpha:',self.quant_alpha.data_ptr)
         # Entropy
         self.target_entropy = -1
         self.entropy_fuzz   = -1
-        self.tau_change     = 0.005
+        self.tau_change     = 0.0008
         self.code_entropies = torch.zeros(1,2,dtype=torch.float)
         self.quant_losses   = torch.zeros(1,2,dtype=torch.float)
         

@@ -127,16 +127,9 @@ def overlap_add(audio, timestamps, device):
 
 def inference(
     audio,
-    model_name=args.model_name, 
-    model_id=args.model_id, 
+    model,
     device=args.device
 ):
-
-    model = load_model(
-        model_name=model_name,
-        model_id=model_id,
-        device=device
-        )
 
     x, timestamps = prepare_audio(audio)
     x_new = overlap_add(x,timestamps,device=device)
@@ -146,46 +139,36 @@ def inference(
 
     y = overlap_add(y_tmp_2,timestamps,device=device)
 
-    fig, (ax1, ax2) = plt.subplots(1, 2)
-    ax1.plot(y_tmp[10,:].cpu().permute(1,0).detach().numpy())
-    ax1.title.set_text('X snip')
-    plt.savefig(os.path.join(args.main_dir,model_name+'/'+model_id+'/test''.png'))
-
     return x_new, y
 
-def make_an_experiment(model_name='',model_id=''):
+def evaluate_model(model_name='',model_id=''):
 
     use_cuda = torch.cuda.is_available()
     device = torch.device(args.device if use_cuda else "cpu")
     print("Using GPU:", use_cuda)
 
-    with open(os.path.join(args.main_dir,model_name+'/'+model_id+'/'+'test_set.csv'), newline='') as f:
+    with open('./data/test_set.csv'), newline='') as f:
         reader = csv.reader(f)
         testPaths = list(reader)
 
     testPaths = [path for sublist in testPaths for path in sublist]
-
-    randPath = "../../../media/sdb1/Data/ETRI_Music/1879-00001-CFD.wav"#testPaths[random.randint(0,len(testPaths)-1)]
-    audio = utils.load_audio(randPath, start=0, dur=None, sr=args.sample_rate)
-    print(randPath)
-    if args.nb_channels == 1:
-        audio_mono = torch.clone(torch.mean(audio, axis=0, keepdim=True))
     
-    x, y = inference(model_name=model_name,model_id=model_id,audio=audio_mono,device=device)
+    model = load_model(
+    model_name=model_name,
+    model_id=model_id,
+    device=device
+    )
 
-    fig, (ax1, ax2) = plt.subplots(1, 2)
-    ax1.plot(audio_mono.cpu().permute(1,0).detach().numpy())
-    ax1.title.set_text('X')
-    ax2.plot(y.cpu().permute(1,0).detach().numpy())
-    ax2.title.set_text('Y')
-    fig.tight_layout()
-    plt.savefig(os.path.join(args.main_dir,model_name+'/'+model_id+'/'+str(args.overlap)+'.png'))
+    for test_path in tqdm.tqdm(testPaths):
 
-    print(np.unique(y.cpu().permute(1,0).detach().numpy(), return_counts=True))
+        audio = utils.load_audio(randPath, start=0, dur=None, sr=args.sample_rate)
+        if args.nb_channels == 1:
+            audio_mono = torch.clone(torch.mean(audio, axis=0, keepdim=True))
+    
+        x, y = inference(model=model,audio=audio_mono,device=device)
 
-    utils.soundfile_writer(os.path.join(args.main_dir,model_name+'/'+model_id+'/'+'x'+str(args.overlap)+'.wav'), x.cpu().permute(1,0).detach().numpy(), 44100)
-    utils.soundfile_writer(os.path.join(args.main_dir,model_name+'/'+model_id+'/'+'y'+str(args.overlap)+'.wav'), y.cpu().permute(1,0).detach().numpy(), 44100)
+        # utils.soundfile_writer(os.path.join(args.main_dir,model_name+'/'+model_id+'/'+'x'+str(args.overlap)+'.wav'), x.cpu().permute(1,0).detach().numpy(), 44100)
+        # utils.soundfile_writer(os.path.join(args.main_dir,model_name+'/'+model_id+'/'+'y'+str(args.overlap)+'.wav'), y.cpu().permute(1,0).detach().numpy(), 44100)
 
-    return x, y
 
-#make_an_experiment(model_name='waveunet_no_skip',model_id='797115')
+#make_an_experiment(model_name='waveunet_enc_skip',model_id='373831')

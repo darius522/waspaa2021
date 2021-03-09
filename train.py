@@ -1,6 +1,6 @@
 import os
 os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"]="6"  # specify which GPU(s) to be used
+os.environ["CUDA_VISIBLE_DEVICES"]="6,7"  # specify which GPU(s) to be used
 
 import torch
 import torch.nn as nn
@@ -9,6 +9,7 @@ import random
 from pathlib import Path
 import tqdm
 import json
+import csv
 
 import torch.nn.functional as F
 from torchvision import datasets, transforms
@@ -49,8 +50,9 @@ parser.add_argument('--message', type=str, default='layer=5, \
                                                     w=24, \
                                                     num_bins=32, \
                                                     entropy_target=64kbps, \
-                                                    alpha=-20, \
+                                                    alpha=-40, \
                                                     loss weights=[70.0, 1.0, 10.0],\
+                                                    change_tau=0.0008,\
                                                     summary: One AE skip')
 
 # Dataset paramaters
@@ -104,7 +106,7 @@ parser.add_argument('--nb-workers', type=int, default=0,
 # Misc Parameters
 parser.add_argument('--quiet', action='store_true', default=False,
                     help='less verbose during training')
-parser.add_argument('--device', action='store_true', default='cuda:0',
+parser.add_argument('--device', action='store_true', default=1,
                     help='cpu or cuda')
 
 args, _ = parser.parse_known_args()
@@ -115,10 +117,14 @@ allPaths += [os.path.join(rootPath,song) for song in os.listdir(rootPath) if not
 totLen    = len(allPaths)
 random.seed(0)
 
+with open('./data/test_set.csv', newline='') as f:
+    reader  = csv.reader(f)
+    tePaths = list(reader)
+
+allPaths = [p for p in allPaths if p not in tePaths]
 random.shuffle(allPaths)
 trPaths = allPaths[:np.int(totLen*.9)]
-vPaths  = allPaths[np.int(totLen*.9):np.int(totLen*.95)]
-tePaths = allPaths[np.int(totLen*.95):]
+vPaths  = allPaths[np.int(totLen*.9):]
 
 random.shuffle(trPaths)
 tic=time.time()
@@ -224,7 +230,6 @@ target_path.mkdir(parents=True, exist_ok=True)
 log_dir = Path(os.path.join(target_path,'log_dir'))
 log_dir.mkdir(parents=True, exist_ok=True)
 
-utils.dataset_items_to_csv(path=os.path.join(args.output,args.model+"/"+args.experiment_id+"/"+"test_set.csv"),items=tePaths)
 utils.dataset_items_to_csv(path=os.path.join(args.output,args.model+"/"+args.experiment_id+"/"+"train_set.csv"),items=trPaths)
 utils.dataset_items_to_csv(path=os.path.join(args.output,args.model+"/"+args.experiment_id+"/"+"val_set.csv"),items=vPaths)
 
