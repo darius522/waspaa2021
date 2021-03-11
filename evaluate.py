@@ -1,4 +1,11 @@
 import os
+os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
+os.environ["CUDA_VISIBLE_DEVICES"]="6,7"  # specify which GPU(s) to be used
+
+from sacred import Experiment
+from config import config_ingredient
+
+import os
 import torch
 import csv
 import numpy as np
@@ -22,6 +29,12 @@ from utils import (normalize_audio)
 
 import torchaudio
 
+ex = Experiment('HARP Evaluation', ingredients=[config_ingredient])
+
+@ex.config
+def set_seed():
+    seed = 1337
+
 def compute_snr(x, y):
     eps = 1e-20
     ml  = np.minimum(len(x), len(y))
@@ -32,28 +45,24 @@ def load_a_model(config):
 
     if 'baseline' in config['model']:
         model = models.Waveunet(n_ch=config['nb_channels'], 
-                                num_layers=config['num_layers'], 
-                                tau_change=config['tau_change'], 
-                                quant_alpha=config['quant_alpha'])
-    elif 'harp' in config['model']:
+                                num_layers=config['num_layers'])
+    elif 'harpnet' in config['model']:
         model = models.HARPNet(n_ch=config['nb_channels'], 
-                                num_skips=config['num_skips'],
-                                tau_change=config['tau_change'], 
-                                quant_alpha=config['quant_alpha'])
+                                num_skips=config['num_skips'])
         for m in model.skip_encoders:
             m.quant_active = True
     
     model.quant_active = True
 
     model_path = os.path.join(os.path.join(config['output_dir'], config['model']), config['model_id'])
-    model_path = next(Path(model_path).glob("%s*.pth" % config['model_id']))
-    print(model_path)
+    pth_path   = next(Path(model_path).glob("%s*.pth" % config['model_id']))
+    print(pth_path)
 
     with open(Path(model_path, config['model_id'] + '.json'), 'r') as stream:
         results = json.load(stream)
 
     state = torch.load(
-        model_path,
+        pth_path,
         map_location=config['device']
     )
 
@@ -92,7 +101,7 @@ def prepare_audio(config, audio):
     return prep_audio, timestamps
 
 @config_ingredient.capture
-def overlap_add(config, audio, timestamps, device):
+def overlap_add(config, audio, timestamps):
 
     audio_ = torch.clone(audio)
 
@@ -123,13 +132,14 @@ def inference(
     model,
 ):
 
-    x, timestamps = prepare_audio(audio)
-    x_new = overlap_add(x,timestamps,device=config['device'])
+    x, timestamps = prepare_audio(audio=audio)
+    x_new = overlap_add(audio=x,timestamps=timestamps)
+    x = x.to(device=config['device'])
 
     y_tmp = model(x)
-    y_tmp_2 = y_tmp.detach().clone()
+    y_tmp_2 = y_tmp.cpu().detach().clone()
 
-    y = overlap_add(y_tmp_2,timestamps,device=config['device'])
+    y = overlap_add(audio=y_tmp_2,timestamps=timestamps)
 
     return x_new, y
 
@@ -149,11 +159,7 @@ def main(cfg):
 
     testPaths = [path for sublist in testPaths for path in sublist]
     
-    model = load_a_model(
-    model_name=model_name,
-    model_id=model_id,
-    device=device
-    )
+    model = load_a_model()
 
     errors = []
     count = 0
@@ -167,6 +173,6 @@ def main(cfg):
         x, y = inference(model=model,audio=audio_mono)
         errors.append(compute_snr(x, y))
         # utils.soundfile_writer(os.path.join(args.main_dir,model_name+'/'+model_id+'/'+'x'+str(count)+'.wav'), x.cpu().permute(1,0).detach().numpy(), 44100)
-        # utils.soundfile_writer(os.path.join(args.main_dir,model_name+'/'+model_id+'/'+'y'+str(count)+'.wav'), y.cpu().permute(1,0).detach().numpy(), 44100)
+        utils.soundfile_writer(os.path.join(os.path.join(config['output_dir'], config['model']), config['model_id']) +'y'+str(count)+'.wav', y.cpu().permute(1,0).detach().numpy(), 44100)
 
-    print(model_name,'/',model_id,'evaluated with snr mean:',np.mean(np.asarray(errors)))
+    print(config['model'],'/',config['model_id'],'evaluated with snr mean:',np.mean(np.asarray(errors)))

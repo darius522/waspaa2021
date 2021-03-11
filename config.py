@@ -48,21 +48,23 @@ def cfg():
 
 @config_ingredient.named_config
 def baseline_0_large():
-    print("Training baseline_0_large model")
+    print("baseline_0_large model")
     config = {
         'model' : 'baseline_0_large',
-        'model_id': ''
         'target_bitrate': 64000,
         'bitrate_fuzz': 450,
         'num_skips': 0,
         'num_layers': 8, # Matching with HARP 1 AE = 110k param / 120k param
         'tau_change': 0.005,
-        'quant_alpha': -20
+        'quant_alpha': -20,
+
+        # Evaluation
+        'model_id': '131595'
     }
 
 @config_ingredient.named_config
 def harpnet_0_large():
-    print("Training harpnet_0_large model")
+    print("harpnet_0_large model")
     config = {
         'model' : 'harpnet_0_large',
         'target_bitrate': 64000,
@@ -70,5 +72,8 @@ def harpnet_0_large():
         'num_skips': 1,
         'num_layers': 5, # 1 AE = 110k param
         'tau_change': 0.0008,
-        'quant_alpha': -40
+        'quant_alpha': -40,
+
+        # Evaluation
+        'model_id': '105327'
     }
