@@ -43,7 +43,7 @@ experiment_id = np.random.randint(0,1000000)
 parser = argparse.ArgumentParser(description='Trainer')
 
 parser.add_argument('--experiment-id', type=str, default=str(experiment_id))
-parser.add_argument('--model', type=str, default="waveunet_no_skip")
+parser.add_argument('--model', type=str, default="baseline_0")
 parser.add_argument('--load-ckpt', type=str, default='558920')
 parser.add_argument('--message', type=str, default='layer=8, \
                                                     w=24, \
@@ -63,15 +63,13 @@ parser.add_argument('--epochs', type=int, default=300)
 parser.add_argument('--num-its', type=int, default=1)
 parser.add_argument('--batch-size', type=int, default=16)
 
-# Hyper-parameters
-# Quant/Entropy
+# Hyper-parameters: Quant/Entropy
 parser.add_argument('--quant', type=bool, default=False)
 parser.add_argument('--quant-active', type=int, default=5)
 parser.add_argument('--target-bitrate', type=int, default=64000,
                     help='target bitrate. by default the bitrate of 44.1 mono audio = 705,600')
 parser.add_argument('--bitrate-fuzz', type=int, default=450,
                     help='amount of bitrate fuzz allowed around the target bitrate before adjusting tau')
-
 parser.add_argument('--loss-weights', type=list, default=[70.0, 1.0, 10.0],
                     help='weight of each loss term: [mse,quant,entropy]')
 parser.add_argument('--num-skips', type=list, default=1)
@@ -89,7 +87,7 @@ parser.add_argument('--weight-decay', type=float, default=0.00001,
 parser.add_argument('--seed', type=int, default=42, metavar='S',
                     help='random seed (default: 42)')
 
-# Model Parameters
+# Data Parameters
 parser.add_argument('--seq-dur', type=float, default=16384,
                     help='Sequence duration in seconds')
 parser.add_argument('--overlap', type=float, default=64)
@@ -239,7 +237,6 @@ valid_sampler = torch.utils.data.DataLoader(
 
 model = models.Waveunet(
     n_ch=args.nb_channels,
-    model=utils.model_dic[args.model],
     num_skips=args.num_skips)
 model.set_network_entropy_target(args.target_bitrate,\
                                 args.bitrate_fuzz,\

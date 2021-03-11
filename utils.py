@@ -13,17 +13,6 @@ import soundfile
 from scipy.interpolate import interp1d
 from enum import Enum
 
-class Model(Enum):
-    waveunet_no_skip = 1
-    waveunet_skip = 2
-    waveunet_enc_skip = 3
-
-model_dic = {
-    'waveunet_no_skip': Model.waveunet_no_skip,
-    'waveunet_skip': Model.waveunet_skip,
-    'waveunet_enc_skip': Model.waveunet_enc_skip
-}
-
 def normalize_audio(min, max, audio):
     return (max - min) * ((audio - torch.min(audio)) / (torch.max(audio) - torch.min(audio))) + min
 
