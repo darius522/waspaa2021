@@ -39,15 +39,13 @@ def _augment_channelswap(audio):
         return audio
 
 
-def load_datasets(parser, args, train=None, valid=None):
-
-    args = parser.parse_args()
+def load_datasets(config, train=None, valid=None):
 
     dataset_kwargs = {
-        'root': args.root,
-        'seq_duration': args.seq_dur,
-        'num_ch': args.nb_channels,
-        'sample_rate': args.sample_rate
+        'root': config['root'],
+        'seq_duration': config['seq_dur'],
+        'num_ch': config['nb_channels'],
+        'sample_rate': config['sample_rate']
     }
 
     train_dataset = Dataset(
@@ -62,7 +60,7 @@ def load_datasets(parser, args, train=None, valid=None):
         **dataset_kwargs
     )
 
-    return train_dataset, valid_dataset, args
+    return train_dataset, valid_dataset
 
 
 class Dataset(torch.utils.data.Dataset):
