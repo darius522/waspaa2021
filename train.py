@@ -1,6 +1,6 @@
 import os
 os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"]="6"  # specify which GPU(s) to be used
+os.environ["CUDA_VISIBLE_DEVICES"]="6,7"  # specify which GPU(s) to be used
 
 import torch
 import torch.nn as nn
@@ -36,76 +36,6 @@ import models
 import data
 import utils
 import evaluate
-
-rootPath='../../../media/sdb1/Data/ETRI_Music/'
-experiment_id = np.random.randint(0,1000000)
-
-parser = argparse.ArgumentParser(description='Trainer')
-
-parser.add_argument('--experiment-id', type=str, default=str(experiment_id))
-parser.add_argument('--model', type=str, default="baseline_0")
-parser.add_argument('--load-ckpt', type=str, default='558920')
-parser.add_argument('--message', type=str, default='layer=8, \
-                                                    w=24, \
-                                                    num_bins=32, \
-                                                    entropy_target=64kbps, \
-                                                    alpha=-20, \
-                                                    loss weights=[70.0, 1.0, 10.0],\
-                                                    summary: No skip')
-
-# Dataset paramaters
-parser.add_argument('--root', type=str, default=rootPath, help='root path of dataset')
-parser.add_argument('--output', type=str, default="output",
-                    help='provide output path base folder name')
-
-# Trainig Parameters
-parser.add_argument('--epochs', type=int, default=300)
-parser.add_argument('--num-its', type=int, default=1)
-parser.add_argument('--batch-size', type=int, default=16)
-
-# Hyper-parameters: Quant/Entropy
-parser.add_argument('--quant', type=bool, default=False)
-parser.add_argument('--quant-active', type=int, default=5)
-parser.add_argument('--target-bitrate', type=int, default=64000,
-                    help='target bitrate. by default the bitrate of 44.1 mono audio = 705,600')
-parser.add_argument('--bitrate-fuzz', type=int, default=450,
-                    help='amount of bitrate fuzz allowed around the target bitrate before adjusting tau')
-parser.add_argument('--loss-weights', type=list, default=[70.0, 1.0, 10.0],
-                    help='weight of each loss term: [mse,quant,entropy]')
-parser.add_argument('--num-skips', type=list, default=1)
-
-parser.add_argument('--lr', type=float, default=0.001,
-                    help='learning rate, defaults to 1e-4')
-parser.add_argument('--patience', type=int, default=300,
-                    help='maximum number of epochs to train (default: 140)')
-parser.add_argument('--lr-decay-patience', type=int, default=80,
-                    help='lr decay patience for plateau scheduler')
-parser.add_argument('--lr-decay-gamma', type=float, default=0.3,
-                    help='gamma of learning rate scheduler decay')
-parser.add_argument('--weight-decay', type=float, default=0.00001,
-                    help='weight decay')
-parser.add_argument('--seed', type=int, default=42, metavar='S',
-                    help='random seed (default: 42)')
-
-# Data Parameters
-parser.add_argument('--seq-dur', type=float, default=16384,
-                    help='Sequence duration in seconds')
-parser.add_argument('--overlap', type=float, default=64)
-parser.add_argument('--zero-pad', type=float, default=1024+7040, 
-                    help='Optional zero-padding to be added to batch')
-parser.add_argument('--nb-channels', type=int, default=1,
-                    help='set number of channels for model (1, 2)')
-parser.add_argument('--sample-rate', type=int, default=44100)
-parser.add_argument('--nb-workers', type=int, default=0,
-                    help='Number of workers for dataloader.')
-
-# Misc Parameters
-parser.add_argument('--quiet', action='store_true', default=False,
-                    help='less verbose during training')
-parser.add_argument('--device', action='store_true', default='cuda:0',
-                    help='cpu or cuda')
-
-args, _ = parser.parse_known_args()
 
 
 allPaths  = []
