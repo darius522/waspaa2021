@@ -217,7 +217,7 @@ def valid(args, model, device, valid_sampler, writer, epoch):
 use_cuda = torch.cuda.is_available()
 device = torch.device(args.device if use_cuda else "cpu")
 print("Using GPU:", use_cuda)
-#dataloader_kwargs = {'num_workers': args.nb_workers, 'pin_memory': True} if use_cuda else {}
+dataloader_kwargs = {'num_workers': args.nb_workers} if use_cuda else {}
 
 torch.manual_seed(args.seed)
 random.seed(args.seed)

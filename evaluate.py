@@ -165,8 +165,10 @@ def evaluate_model(model_name='',model_id=''):
     )
 
     errors = []
-    for test_path in tqdm.tqdm(testPaths):
+    count = 0
+    for test_path in tqdm.tqdm(testPaths[:2]):
 
+        count += 1
         audio = utils.load_audio(test_path, start=0, dur=None, sr=args.sample_rate)
         if args.nb_channels == 1:
             audio_mono = torch.clone(torch.mean(audio, axis=0, keepdim=True))
@@ -174,10 +176,9 @@ def evaluate_model(model_name='',model_id=''):
         x, y = inference(model=model,audio=audio_mono,device=device)
         errors.append(compute_snr(x, y))
 
+        utils.soundfile_writer(os.path.join(args.main_dir,model_name+'/'+model_id+'/'+'x'+str(count)+'.wav'), x.cpu().permute(1,0).detach().numpy(), 44100)
+        utils.soundfile_writer(os.path.join(args.main_dir,model_name+'/'+model_id+'/'+'y'+str(count)+'.wav'), y.cpu().permute(1,0).detach().numpy(), 44100)
+
     print(model_name,'/',model_id,'evaluated with snr mean:',np.mean(np.asarray(errors)))
 
-        # utils.soundfile_writer(os.path.join(args.main_dir,model_name+'/'+model_id+'/'+'x'+str(args.overlap)+'.wav'), x.cpu().permute(1,0).detach().numpy(), 44100)
-        # utils.soundfile_writer(os.path.join(args.main_dir,model_name+'/'+model_id+'/'+'y'+str(args.overlap)+'.wav'), y.cpu().permute(1,0).detach().numpy(), 44100)
-
 evaluate_model(model_name='waveunet_enc_skip',model_id='105327')
-evaluate_model(model_name='waveunet_no_skip',model_id='131595')
