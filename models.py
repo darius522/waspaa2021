@@ -379,7 +379,6 @@ class HARPNet(nn.Module):
 
                 x = torch.cat((x, skip_layer), 1)
 
-
         # Final concatenation with original input, 1x1 convolution, and tanh output
         if self.num_skips == self.num_layers+1:
             inputs, input_entropy, input_quant_loss = self.skip_encoders.forward_skip[-1](inputs)

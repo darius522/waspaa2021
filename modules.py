@@ -141,6 +141,7 @@ class SkipEncoding(nn.Module):
         if self.quant_active:
             x, code_entropy, quant_loss = self.quant.forward_q(x)
             weighted_code_entropy = code_entropy
+        x = self.leaky(x)
 
         # Decoding Path
         for layer in range(self.num_layers):

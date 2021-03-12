@@ -5,8 +5,9 @@ config_ingredient = Ingredient("cfg")
 
 @config_ingredient.config
 def cfg():
+    experiment_id = np.random.randint(0,1000000)
     config = {'model' : '',
-            'model_id': '',
+            'model_id': str(experiment_id),
             'output_dir': 'output',
             'root': '../../../media/sdb1/Data/ETRI_Music/',
 
@@ -44,8 +45,6 @@ def cfg():
             'quiet': False,
             'device': 'cuda:0'}
 
-    experiment_id = np.random.randint(0,1000000)
-
 @config_ingredient.named_config
 def baseline_0_large():
     print("baseline_0_large model")
@@ -57,9 +56,19 @@ def baseline_0_large():
         'num_layers': 8, # Matching with HARP 1 AE = 110k param / 120k param
         'tau_change': 0.005,
         'quant_alpha': -20,
+    }
 
-        # Evaluation
-        'model_id': '131595'
+@config_ingredient.named_config
+def baseline_1_large():
+    print("baseline_1_large model")
+    config = {
+        'model' : 'baseline_1_large',
+        'target_bitrate': 64000,
+        'bitrate_fuzz': 450,
+        'num_skips': 0,
+        'num_layers': 10, # Matching with HARP 2 AE = 152k param / 157k param
+        'tau_change': 0.005,
+        'quant_alpha': -25,
     }
 
 @config_ingredient.named_config
@@ -70,10 +79,20 @@ def harpnet_0_large():
         'target_bitrate': 64000,
         'bitrate_fuzz': 450,
         'num_skips': 1,
-        'num_layers': 5, # 1 AE = 110k param
+        'num_layers': 5, # 1 AE = 120k param
         'tau_change': 0.0008,
         'quant_alpha': -40,
+    }
 
-        # Evaluation
-        'model_id': '105327'
+@config_ingredient.named_config
+def harpnet_1_large():
+    print("harpnet_1_large model")
+    config = {
+        'model' : 'harpnet_1_large',
+        'target_bitrate': 64000,
+        'bitrate_fuzz': 450,
+        'num_skips': 2,
+        'num_layers': 5, # 2 AE = 152k param
+        'tau_change': 0.0008,
+        'quant_alpha': -40,
     }

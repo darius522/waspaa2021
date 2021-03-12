@@ -49,8 +49,9 @@ def load_a_model(config):
     elif 'harpnet' in config['model']:
         model = models.HARPNet(n_ch=config['nb_channels'], 
                                 num_skips=config['num_skips'])
-        for m in model.skip_encoders:
-            m.quant_active = True
+
+    for m in model.skip_encoders:
+        m.quant_active = True
     
     model.quant_active = True
 
@@ -144,13 +145,9 @@ def inference(
     return x_new, y
 
 
-@ex.automain
-def main(cfg):
-
-    config = cfg['config']
+def evaluate(config):
 
     use_cuda = torch.cuda.is_available()
-    device = torch.device(config['device'] if use_cuda else "cpu")
     print("Using GPU:", use_cuda)
 
     with open('./data/test_set.csv', newline='') as f:
@@ -163,7 +160,7 @@ def main(cfg):
 
     errors = []
     count = 0
-    for test_path in tqdm.tqdm(testPaths[:2]):
+    for test_path in tqdm.tqdm(testPaths):
 
         count += 1
         audio = utils.load_audio(test_path, start=0, dur=None, sr=config['sample_rate'])
@@ -173,6 +170,11 @@ def main(cfg):
         x, y = inference(model=model,audio=audio_mono)
         errors.append(compute_snr(x, y))
         # utils.soundfile_writer(os.path.join(args.main_dir,model_name+'/'+model_id+'/'+'x'+str(count)+'.wav'), x.cpu().permute(1,0).detach().numpy(), 44100)
-        utils.soundfile_writer(os.path.join(os.path.join(config['output_dir'], config['model']), config['model_id']) +'y'+str(count)+'.wav', y.cpu().permute(1,0).detach().numpy(), 44100)
+        # utils.soundfile_writer(os.path.join(os.path.join(config['output_dir'], config['model']), config['model_id']) +'y'+str(count)+'.wav', y.cpu().permute(1,0).detach().numpy(), 44100)
 
-    print(config['model'],'/',config['model_id'],'evaluated with snr mean:',np.mean(np.asarray(errors)))
+    print('SNR computed:',np.mean(np.asarray(errors)))
+    return np.mean(np.asarray(errors))
+
+@ex.automain
+def main(cfg):
+    evaluate(config=cfg)

@@ -34,7 +34,7 @@ import logging
 import models
 import data
 import utils
-#import evaluate
+import evaluate
 
 ex = Experiment('HARP Training', ingredients=[config_ingredient])
 
@@ -48,6 +48,8 @@ def set_seed():
 
 @config_ingredient.capture
 def train(config, model, device, train_sampler, optimizer, writer, epoch):
+
+    loss_weights = torch.FloatTensor(config['loss_weights']).to(device)
 
     total_losses        = utils.AverageMeter()
     mse_losses   = utils.AverageMeter()
@@ -99,6 +101,9 @@ def train(config, model, device, train_sampler, optimizer, writer, epoch):
 
 @config_ingredient.capture
 def valid(config, model, device, valid_sampler, writer, epoch):
+
+    loss_weights = torch.FloatTensor(config['loss_weights']).to(device)
+
     total_losses        = utils.AverageMeter()
     mse_losses   = utils.AverageMeter()
     entropy_losses      = utils.AverageMeter()
@@ -155,21 +160,22 @@ def load_a_model(config):
     
     summary(model,(config['nb_channels'],config['seq_dur']),device='cpu')
     model.to(config['device'])
-    print("Model loaded with num. param:", sum(p.numel() for p in model.parameters() if p.requires_grad))
+    num_param = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print("Model loaded with num. param:", num_param)
     print("Model's entropy target set to:",model.target_entropy)
 
-    return model
+    return model, num_param
 
 @ex.automain
 def main(cfg):
 
     config = cfg['config']
-    experiment_id = str(cfg['experiment_id'])
 
     use_cuda = torch.cuda.is_available()
     device = torch.device(config['device'] if use_cuda else "cpu")
     print("Using GPU:", use_cuda)
     dataloader_kwargs = {'num_workers': 0} if use_cuda else {}
+    torch.set_num_threads(1)
 
     torch.manual_seed(config['seed'])
     random.seed(config['seed'])
@@ -200,7 +206,7 @@ def main(cfg):
     # create output dir / log dir if not exist
     model_path = Path(os.path.join(config['output_dir'], config['model']))
     if not model_path.exists: model_path.mkdir(parents=True, exist_ok=True)
-    target_path = Path(os.path.join(model_path, experiment_id))
+    target_path = Path(os.path.join(model_path, config['model_id']))
     target_path.mkdir(parents=True, exist_ok=True)
     log_dir = Path(os.path.join(target_path,'log_dir'))
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -221,7 +227,7 @@ def main(cfg):
     ########################## Model #############################
     ##############################################################
 
-    model = load_a_model()
+    model, num_param = load_a_model()
 
     allPaths  = []
     allPaths += [os.path.join(config['root'],song) for song in os.listdir(config['root']) if not os.path.isdir(os.path.join(config['root'], song))]
@@ -236,8 +242,6 @@ def main(cfg):
     random.shuffle(trPaths)
     tic=time.time()
 
-    loss_weights = torch.FloatTensor(config['loss_weights']).to(device)
-
     optimizer = torch.optim.Adam(
         model.parameters(),
         lr=config['lr']
@@ -251,106 +255,106 @@ def main(cfg):
     train_times  = []
     best_epoch   = 0
 
-    # ##############################################################
-    # ######################### Training ###########################
-    # ##############################################################
+    ##############################################################
+    ######################### Training ###########################
+    ##############################################################
 
-    # for epoch in t:
+    for epoch in t:
 
-    #     t.set_description("Training Epoch")
-    #     end = time.time()
-    #     print("epoch:",epoch,"\nexperiment:",args.experiment_id,"\nmessage:",args.message,"\bottleneck:",model.bottleneck_dims)
-    #     if epoch == args.quant_active:
-    #         print('quant active')
-    #         model.quant_active = True
-    #         for m in model.skip_encoders:
-    #             m.quant_active = True
+        t.set_description("Training Epoch")
+        end = time.time()
+        print("epoch:",epoch,"\nexperiment:",config['model_id'])
+        if epoch == config['quant_active']:
+            print('quant active')
+            model.quant_active = True
+            for m in model.skip_encoders:
+                m.quant_active = True
 
-    #     mse_train_loss, ent_train_loss, quant_train_loss, train_loss, entropy_avg = train(args,
-    #                                                                                         model,
-    #                                                                                         device,
-    #                                                                                         train_sampler,
-    #                                                                                         optimizer,
-    #                                                                                         writer,
-    #                                                                                         epoch)
-    #     mse_val_loss, ent_val_loss, quant_valid_loss, valid_loss = valid(args, 
-    #                                                                     model,
-    #                                                                     device,
-    #                                                                     valid_sampler,
-    #                                                                     writer,
-    #                                                                     epoch)
-    #     train_losses.append(train_loss)
-    #     valid_losses.append(valid_loss)
+        mse_train_loss, ent_train_loss, quant_train_loss, train_loss, entropy_avg = train(config,
+                                                                                            model,
+                                                                                            device,
+                                                                                            train_sampler,
+                                                                                            optimizer,
+                                                                                            writer,
+                                                                                            epoch)
+        mse_val_loss, ent_val_loss, quant_valid_loss, valid_loss = valid(config, 
+                                                                        model,
+                                                                        device,
+                                                                        valid_sampler,
+                                                                        writer,
+                                                                        epoch)
+        train_losses.append(train_loss)
+        valid_losses.append(valid_loss)
 
-    #     print('mse_train_loss', mse_train_loss)
-    #     print('mse_val_loss', mse_val_loss)
-    #     print('ent_train_loss', ent_train_loss)
-    #     print('ent_val_loss', ent_val_loss)
-    #     print('quant_train_loss', quant_train_loss)
-    #     print('quant_valid_loss', quant_valid_loss)
-    #     print('train_loss', train_loss)
-    #     print('valid_loss', valid_loss)
-    #     print('entropy_avg', entropy_avg)
-    #     print('quant_bins', model.state_dict()['quant_bins'].clone().cpu().data.numpy())
-    #     print('quant_alpha', model.state_dict()['quant_alpha'].clone().cpu().data)
+        print('mse_train_loss', mse_train_loss)
+        print('mse_val_loss', mse_val_loss)
+        print('ent_train_loss', ent_train_loss)
+        print('ent_val_loss', ent_val_loss)
+        print('quant_train_loss', quant_train_loss)
+        print('quant_valid_loss', quant_valid_loss)
+        print('train_loss', train_loss)
+        print('valid_loss', valid_loss)
+        print('entropy_avg', entropy_avg)
+        print('quant_bins', model.state_dict()['quant_bins'].clone().cpu().data.numpy())
+        print('quant_alpha', model.state_dict()['quant_alpha'].clone().cpu().data)
 
-    #     writer.add_scalar("mse_train_loss", mse_train_loss, epoch)
-    #     writer.add_scalar("mse_valid_loss", mse_val_loss, epoch)
-    #     writer.add_scalar("entropy_train_loss", ent_train_loss, epoch)
-    #     writer.add_scalar("entropy_valid_loss", ent_val_loss, epoch)
-    #     writer.add_scalar("quant_train_loss", quant_train_loss, epoch)
-    #     writer.add_scalar("quant_valid_loss", quant_valid_loss, epoch)
-    #     writer.add_scalar("total_train_loss", train_loss, epoch)
-    #     writer.add_scalar("total_valid_loss", valid_loss, epoch)
-    #     writer.add_scalar("entropy_avg", entropy_avg, epoch)
-    #     writer.add_histogram('quantization bins', model.state_dict()['quant_bins'].clone().cpu().data.numpy(), epoch)
-    #     writer.add_scalar('quantization alpha', model.state_dict()['quant_alpha'].clone().cpu().data, epoch)
+        writer.add_scalar("mse_train_loss", mse_train_loss, epoch)
+        writer.add_scalar("mse_valid_loss", mse_val_loss, epoch)
+        writer.add_scalar("entropy_train_loss", ent_train_loss, epoch)
+        writer.add_scalar("entropy_valid_loss", ent_val_loss, epoch)
+        writer.add_scalar("quant_train_loss", quant_train_loss, epoch)
+        writer.add_scalar("quant_valid_loss", quant_valid_loss, epoch)
+        writer.add_scalar("total_train_loss", train_loss, epoch)
+        writer.add_scalar("total_valid_loss", valid_loss, epoch)
+        writer.add_scalar("entropy_avg", entropy_avg, epoch)
+        writer.add_histogram('quantization_bins', model.state_dict()['quant_bins'].clone().cpu().data.numpy(), epoch)
+        writer.add_scalar('quantization_alpha', model.state_dict()['quant_alpha'].clone().cpu().data, epoch)
 
-    #     t.set_postfix(
-    #         train_loss=train_loss, val_loss=valid_loss
-    #     )
+        t.set_postfix(
+            train_loss=train_loss, val_loss=valid_loss
+        )
 
-    #     stop = es.step(valid_loss)
+        stop = es.step(valid_loss)
 
-    #     if valid_loss == es.best:
-    #         best_epoch = epoch
+        if valid_loss == es.best:
+            best_epoch = epoch
 
-    #     utils.save_checkpoint({
-    #             'epoch': epoch + 1,
-    #             'state_dict': model.state_dict(),
-    #             'best_loss': es.best,
-    #             'optimizer': optimizer.state_dict()
-    #         },
-    #         is_best=valid_loss == es.best,
-    #         path=target_path,
-    #         target=args.experiment_id
-    #     )
+        utils.save_checkpoint({
+                'epoch': epoch + 1,
+                'state_dict': model.state_dict(),
+                'best_loss': es.best,
+                'optimizer': optimizer.state_dict()
+            },
+            is_best=valid_loss == es.best,
+            path=target_path,
+            target=config['model_id']
+        )
 
-    #     # save params
-    #     params = {
-    #         'epochs_trained': epoch,
-    #         'args': vars(args),
-    #         'best_loss': es.best,
-    #         'best_epoch': best_epoch,
-    #         'train_loss_history': train_losses,
-    #         'valid_loss_history': valid_losses,
-    #         'train_time_history': train_times,
-    #         'num_bad_epochs': es.num_bad_epochs
-    #     }
+        # save params
+        params = {
+            'model_num_param': num_param,
+            'epochs_trained': epoch,
+            'config': vars(config),
+            'best_loss': es.best,
+            'best_epoch': best_epoch,
+            'train_loss_history': train_losses,
+            'valid_loss_history': valid_losses,
+            'train_time_history': train_times,
+            'num_bad_epochs': es.num_bad_epochs
+        }
 
-    #     # Post epoch business
-    #     with open(Path(target_path,  args.experiment_id + '.json'), 'w') as outfile:
-    #         outfile.write(json.dumps(params, indent=4, sort_keys=True))
+        # Post epoch business
+        with open(Path(target_path,  config['model_id'] + '.json'), 'w') as outfile:
+            outfile.write(json.dumps(params, indent=4, sort_keys=True))
 
-    #     utils.plot_loss_to_png(os.path.join(target_path,  args.experiment_id + '.json'))
-    #     train_times.append(time.time() - end)
+        utils.plot_loss_to_png(os.path.join(target_path,  config['model_id'] + '.json'))
+        train_times.append(time.time() - end)
 
-    #     # Save audio example every 10 epochs
-    #     # if epoch%10 == 0:
-    #     #     x_test, y_test = evaluate.make_an_experiment(model_name=args.model, model_id=args.experiment_id)
-    #     #     writer.add_audio("x", x_test.permute(1,0).detach().numpy(), epoch, sample_rate=args.sample_rate)
-    #     #     writer.add_audio("y", y_test.permute(1,0).detach().numpy(), epoch, sample_rate=args.sample_rate)
+        # Evaluate SNR every 10 epochs
+        if epoch%10 == 0:
+            snr = evaluate.evaluate(config=config)
+            writer.add_scalar('snr', snr, epoch)
 
-    #     if stop:
-    #         print("Apply Early Stopping")
-    #         break
+        if stop:
+            print("Apply Early Stopping")
+            break
