@@ -169,12 +169,12 @@ def evaluate(config):
     
         x, y = inference(model=model,audio=audio_mono)
         errors.append(compute_snr(x, y))
-        # utils.soundfile_writer(os.path.join(args.main_dir,model_name+'/'+model_id+'/'+'x'+str(count)+'.wav'), x.cpu().permute(1,0).detach().numpy(), 44100)
-        # utils.soundfile_writer(os.path.join(os.path.join(config['output_dir'], config['model']), config['model_id']) +'y'+str(count)+'.wav', y.cpu().permute(1,0).detach().numpy(), 44100)
+        #utils.soundfile_writer(os.path.join(config['output_dir'],model_name+'/'+model_id+'/'+'x'+str(count)+'.wav'), x.cpu().permute(1,0).detach().numpy(), 44100)
+        #utils.soundfile_writer(os.path.join(os.path.join(config['output_dir'], config['model']), config['model_id']) +'y'+str(count)+'.wav', y.cpu().permute(1,0).detach().numpy(), 44100)
 
     print('SNR computed:',np.mean(np.asarray(errors)))
     return np.mean(np.asarray(errors))
 
 @ex.automain
 def main(cfg):
-    evaluate(config=cfg)
+    evaluate(config=cfg['config'])

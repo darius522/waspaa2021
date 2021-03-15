@@ -43,7 +43,7 @@ def cfg():
 
             # Misc Parameters
             'quiet': False,
-            'device': 'cuda:0'}
+            'device': 'cpu'}
 
 @config_ingredient.named_config
 def baseline_0_large():
@@ -72,6 +72,32 @@ def baseline_1_large():
     }
 
 @config_ingredient.named_config
+def baseline_2_large():
+    print("baseline_2_large model")
+    config = {
+        'model' : 'baseline_2_large',
+        'target_bitrate': 64000,
+        'bitrate_fuzz': 450,
+        'num_skips': 0,
+        'num_layers': 12, # Matching with HARP 3 AE = 192k param / 193k param
+        'tau_change': 0.005,
+        'quant_alpha': -25,
+    }
+
+@config_ingredient.named_config
+def baseline_3_large():
+    print("baseline_3_large model")
+    config = {
+        'model' : 'baseline_3_large',
+        'target_bitrate': 64000,
+        'bitrate_fuzz': 450,
+        'num_skips': 0,
+        'num_layers': 14, # Matching with HARP 3 AE = 192k param / 193k param
+        'tau_change': 0.005,
+        'quant_alpha': -25,
+    }
+
+@config_ingredient.named_config
 def harpnet_0_large():
     print("harpnet_0_large model")
     config = {
@@ -79,7 +105,7 @@ def harpnet_0_large():
         'target_bitrate': 64000,
         'bitrate_fuzz': 450,
         'num_skips': 1,
-        'num_layers': 5, # 1 AE = 120k param
+        'num_layers': 5, # 1 AE = 110k param
         'tau_change': 0.0008,
         'quant_alpha': -40,
     }
@@ -95,4 +121,31 @@ def harpnet_1_large():
         'num_layers': 5, # 2 AE = 152k param
         'tau_change': 0.0008,
         'quant_alpha': -40,
+    }
+
+@config_ingredient.named_config
+def harpnet_2_large():
+    print("harpnet_2_large model")
+    config = {
+        'model' : 'harpnet_2_large',
+        'target_bitrate': 64000,
+        'bitrate_fuzz': 450,
+        'num_skips': 3,
+        'num_layers': 5, # 3 AE = 193k param
+        'tau_change': 0.0008,
+        'quant_alpha': -40
+    }
+
+@config_ingredient.named_config
+def harpnet_3_large():
+    print("harpnet_3_large model")
+    config = {
+        'model' : 'harpnet_3_large',
+        'target_bitrate': 64000,
+        'bitrate_fuzz': 450,
+        'num_skips': 4,
+        'num_layers': 5, # 4 AE = 234k param
+        'tau_change': 0.0008,
+        'quant_alpha': -40,
+        'model_id': '598452'
     }

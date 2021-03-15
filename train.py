@@ -134,7 +134,8 @@ def valid(config, model, device, valid_sampler, writer, epoch):
             quantization_losses.update(quantization_loss.item())
             total_losses.update(total_loss.item(), x.size(1))
 
-        model.entropy_control_update()
+        if model.quant_active == True:
+            model.entropy_control_update()
 
     return mse_losses.avg, entropy_losses.avg, quantization_losses.avg, total_losses.avg
 
@@ -334,7 +335,7 @@ def main(cfg):
         params = {
             'model_num_param': num_param,
             'epochs_trained': epoch,
-            'config': vars(config),
+            'config': config,
             'best_loss': es.best,
             'best_epoch': best_epoch,
             'train_loss_history': train_losses,
