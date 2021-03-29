@@ -1,6 +1,6 @@
 import os
 os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"]="6,7"  # specify which GPU(s) to be used
+os.environ["CUDA_VISIBLE_DEVICES"]="4,5,6,7"  # specify which GPU(s) to be used
 
 from sacred import Experiment
 from config import config_ingredient
@@ -24,6 +24,7 @@ import io
 import math
 from matplotlib import pyplot as plt
 import random
+import pandas as pd
 
 from utils import (normalize_audio)
 
@@ -38,17 +39,22 @@ def set_seed():
 def compute_snr(x, y):
     eps = 1e-20
     ml  = np.minimum(len(x), len(y))
-    return 10 * torch.log10((torch.sum(x[:ml]**2)  / torch.sum((x[:ml]-y[:ml])**2) + eps) + eps)   
+    return 10 * np.log10((np.sum(x[:ml]**2)  / np.sum((x[:ml]-y[:ml])**2) + eps) + eps)   
 
 @config_ingredient.capture
 def load_a_model(config):
 
     if 'baseline' in config['model']:
         model = models.Waveunet(n_ch=config['nb_channels'], 
-                                num_layers=config['num_layers'])
+                                num_layers=config['num_layers'],
+                                H=config['seq_dur'],  
+                                W=config['num_kernel'])
     elif 'harpnet' in config['model']:
-        model = models.HARPNet(n_ch=config['nb_channels'], 
-                                num_skips=config['num_skips'])
+        model = models.HARPNet(n_ch=config['nb_channels'],
+                                num_layers=config['num_layers'],
+                                num_skips=config['num_skips'],
+                                H=config['seq_dur'],  
+                                W=config['num_kernel'])
 
     for m in model.skip_encoders:
         m.quant_active = True
@@ -71,7 +77,9 @@ def load_a_model(config):
     model.eval()
     model.to(config['device'])
 
-    return model
+    num_param = sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+    return model, num_param
 
 @config_ingredient.capture
 def prepare_audio(config, audio):
@@ -125,6 +133,19 @@ def overlap_add(config, audio, timestamps):
         y[:,start:end] = y[:,start:end] + chunk
 
     return y
+
+
+def compute_lpc(residual, coef_path):
+
+    hann = scipy.signal.windows.hann(1024, sym=False)[:, None] ** 0.5
+    A = np.load(coef_path,allow_pickle=True)
+    R = utils.vec2mat(residual,1024,512,hann)
+    Yh = np.zeros_like(R)
+    for i in range(A.shape[1]):
+        Yh[:,i] = utils.LPC_synthesis(A[:,i], R[:,i])
+    yh = utils.mat2vec(Yh, 1024, 512,hann)
+
+    return yh
         
 @config_ingredient.capture
 def inference(
@@ -150,29 +171,52 @@ def evaluate(config):
     use_cuda = torch.cuda.is_available()
     print("Using GPU:", use_cuda)
 
-    with open('./data/test_set.csv', newline='') as f:
+    test_csv = './data/test_set44.csv' if config['sample_rate'] == 44100 else './data/test_set32_lpc.csv'
+    with open(test_csv, newline='') as f:
         reader = csv.reader(f)
         testPaths = list(reader)
 
     testPaths = [path for sublist in testPaths for path in sublist]
     
-    model = load_a_model()
+    model, num_param = load_a_model()
 
     errors = []
     count = 0
+    toWrite = ['1710-00001-PFO','1136-00001-JNO','1265-00003-PFO']
     for test_path in tqdm.tqdm(testPaths):
-
         count += 1
         audio = utils.load_audio(test_path, start=0, dur=None, sr=config['sample_rate'])
         if config['nb_channels'] == 1:
             audio_mono = torch.clone(torch.mean(audio, axis=0, keepdim=True))
     
         x, y = inference(model=model,audio=audio_mono)
-        errors.append(compute_snr(x, y))
-        #utils.soundfile_writer(os.path.join(config['output_dir'],model_name+'/'+model_id+'/'+'x'+str(count)+'.wav'), x.cpu().permute(1,0).detach().numpy(), 44100)
-        #utils.soundfile_writer(os.path.join(os.path.join(config['output_dir'], config['model']), config['model_id']) +'y'+str(count)+'.wav', y.cpu().permute(1,0).detach().numpy(), 44100)
+        #x /= 10.0
+        y /= 10.0
+        print(x.shape)
+        x_lpc = compute_lpc(np.squeeze(x.cpu().permute(1,0).detach().numpy()),test_path.replace('_residual.wav','_Coef.npy'))
+        y_lpc = compute_lpc(np.squeeze(y.cpu().permute(1,0).detach().numpy()),test_path.replace('_residual.wav','_Coef.npy'))
 
-    print('SNR computed:',np.mean(np.asarray(errors)))
+        errors.append(compute_snr(x_lpc, y_lpc))
+
+        if any(filename in test_path for filename in toWrite):
+            utils.soundfile_writer(os.path.join(os.path.join(config['output_dir'], config['model']), config['model_id']) +'/x'+str(count)+'.wav', x_lpc, config['sample_rate'])
+            utils.soundfile_writer(os.path.join(os.path.join(config['output_dir'], config['model']), config['model_id']) +'/y'+str(count)+'.wav', y_lpc, config['sample_rate'])
+
+    mse_mean = np.mean(np.asarray(errors))
+    print('SNR computed:',mse_mean)
+    # Write results to csv
+    results = config['results_csv']
+    if not os.path.isfile(results): 
+        with open(results, "w") as c: 
+            csvwriter = csv.writer(c)  
+            csvwriter.writerow(['model','target_bitrate','num_param','mse']) 
+    
+    frame = pd.read_csv(results, header=0)
+    frame.set_index('model')
+    d = {'model':config['model'], 'target_bitrate': config['target_bitrate'], 'num_param':str(num_param//1000)+'k', 'mse':mse_mean}
+    frame = frame.append(d, ignore_index=True)
+    frame.to_csv(results)
+    
     return np.mean(np.asarray(errors))
 
 @ex.automain

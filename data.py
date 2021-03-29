@@ -91,7 +91,6 @@ class Dataset(torch.utils.data.Dataset):
 
     def __getitem__(self, index):
         path = self.tuple_paths[index]
-
         info = load_info(path)
         # If not target sample rate. adjust the duration accordingly so it matches seq_dur on resampling
         seq_dur = self.seq_duration
@@ -105,6 +104,7 @@ class Dataset(torch.utils.data.Dataset):
             start = 0
 
         audio = load_audio(path, start=start, dur=seq_dur, sr=self.sample_rate)
+        audio *= 100.0
     
         if self.num_ch == 1:
             audio = torch.mean(audio, axis=0, keepdim=True)

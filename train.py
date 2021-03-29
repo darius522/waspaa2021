@@ -1,6 +1,6 @@
 import os
 os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"]="6,7"  # specify which GPU(s) to be used
+os.environ["CUDA_VISIBLE_DEVICES"]="4,5,6,7"  # specify which GPU(s) to be used
 
 from sacred import Experiment
 from config import config_ingredient
@@ -21,6 +21,7 @@ from torchsummary import summary
 from tensorboardX import SummaryWriter
 from torch.utils.data import TensorDataset, DataLoader
 import torchaudio
+import auraloss
 
 import librosa
 import librosa.display
@@ -64,7 +65,6 @@ def train(config, model, device, train_sampler, optimizer, writer, epoch):
     it_bar = tqdm.tqdm(range(config['num_its']), disable=config['quiet'], desc='Iteration',position=0)
     batch_bar = tqdm.tqdm(train_sampler, disable=config['quiet'], desc='Batch',position=1)
 
-
     for it in it_bar:
         for i, x in enumerate(batch_bar):
 
@@ -90,9 +90,6 @@ def train(config, model, device, train_sampler, optimizer, writer, epoch):
             total_losses.update(total_loss.item(), x.size(1))
 
         if model.quant_active == True:
-            print("entropy loss:",entropy_loss)
-            print("quantization loss:",quantization_loss)
-            print("mse loss:",mse_loss)
             print("entropy avg:",entropy_avg)
             print("entropy target:",model.target_entropy)
             print("entropy fuzz:",model.entropy_fuzz)
@@ -113,6 +110,11 @@ def valid(config, model, device, valid_sampler, writer, epoch):
     quantization_loss = torch.Tensor([0]).to(device)
 
     model.eval()
+
+    tanh = nn.Tanh()
+    l1 = nn.L1Loss()
+    gamma = 5.0
+
     with torch.no_grad():
 
         for x in valid_sampler:
@@ -144,14 +146,21 @@ def load_a_model(config):
 
     if 'baseline' in config['model']:
         model = models.Waveunet(n_ch=config['nb_channels'], 
-                                num_layers=config['num_layers'], 
-                                tau_change=config['tau_change'], 
-                                quant_alpha=config['quant_alpha'])
+                                num_layers=config['num_layers'],
+                                W=config['num_kernel'],
+                                H=config['seq_dur'],  
+                                tau_changes=config['tau_changes'], 
+                                quant_alpha=config['quant_alpha'],
+                                alpha_decrease=config['alpha_decrease'])
     elif 'harp' in config['model']:
         model = models.HARPNet(n_ch=config['nb_channels'], 
+                                num_layers=config['num_layers'],
+                                W=config['num_kernel'], 
+                                H=config['seq_dur'],  
                                 num_skips=config['num_skips'],
-                                tau_change=config['tau_change'], 
-                                quant_alpha=config['quant_alpha'])
+                                tau_changes=config['tau_changes'], 
+                                quant_alpha=config['quant_alpha'],
+                                alpha_decrease=config['alpha_decrease'])
         
     model.set_network_entropy_target(config['target_bitrate'],
                                     config['bitrate_fuzz'],
@@ -186,11 +195,12 @@ def main(cfg):
     ##############################################################
 
     allPaths  = []
-    allPaths += [os.path.join(config['root'],song) for song in os.listdir(config['root']) if not os.path.isdir(os.path.join(config['root'], song))]
+    allPaths += [os.path.join(config['root'],song) for song in os.listdir(config['root']) if (not os.path.isdir(os.path.join(config['root'], song)) and song.endswith('.wav'))]
     totLen    = len(allPaths)
     random.seed(0)
 
-    with open('./data/test_set.csv', newline='') as f:
+    test_csv = './data/test_set32_lpc.csv'#'./data/test_set44.csv' if config['sample_rate'] == 44100 else './data/test_set32.csv'
+    with open(test_csv, newline='') as f:
         reader  = csv.reader(f)
         tePaths = list(reader)
 
@@ -245,7 +255,15 @@ def main(cfg):
 
     optimizer = torch.optim.Adam(
         model.parameters(),
-        lr=config['lr']
+        lr=config['lr'],
+        weight_decay=config['weight_decay']
+    )
+
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+    optimizer,
+    factor=config['lr_decay_gamma'],
+    patience=config['lr_decay_patience'],
+    cooldown=10,
     )
 
     es = utils.EarlyStopping(patience=config['patience'])
@@ -286,18 +304,7 @@ def main(cfg):
                                                                         epoch)
         train_losses.append(train_loss)
         valid_losses.append(valid_loss)
-
-        print('mse_train_loss', mse_train_loss)
-        print('mse_val_loss', mse_val_loss)
-        print('ent_train_loss', ent_train_loss)
-        print('ent_val_loss', ent_val_loss)
-        print('quant_train_loss', quant_train_loss)
-        print('quant_valid_loss', quant_valid_loss)
-        print('train_loss', train_loss)
-        print('valid_loss', valid_loss)
-        print('entropy_avg', entropy_avg)
-        print('quant_bins', model.state_dict()['quant_bins'].clone().cpu().data.numpy())
-        print('quant_alpha', model.state_dict()['quant_alpha'].clone().cpu().data)
+        scheduler.step(mse_val_loss)
 
         writer.add_scalar("mse_train_loss", mse_train_loss, epoch)
         writer.add_scalar("mse_valid_loss", mse_val_loss, epoch)
@@ -315,21 +322,31 @@ def main(cfg):
             train_loss=train_loss, val_loss=valid_loss
         )
 
-        stop = es.step(valid_loss)
+        print('entropy:',entropy_avg)
 
-        if valid_loss == es.best:
-            best_epoch = epoch
+        if (
+            entropy_avg < (model.target_entropy+model.entropy_fuzz) and 
+            entropy_avg > (model.target_entropy-model.entropy_fuzz)
+            ):
 
-        utils.save_checkpoint({
-                'epoch': epoch + 1,
-                'state_dict': model.state_dict(),
-                'best_loss': es.best,
-                'optimizer': optimizer.state_dict()
-            },
-            is_best=valid_loss == es.best,
-            path=target_path,
-            target=config['model_id']
-        )
+            _ = es.step(mse_val_loss)
+            if mse_val_loss == es.best:
+                print('model saved, new mse val:',mse_val_loss)
+                best_epoch = epoch
+                utils.save_checkpoint({
+                        'epoch': epoch + 1,
+                        'scheduler': scheduler.state_dict(),
+                        'state_dict': model.state_dict(),
+                        'best_loss': es.best,
+                        'optimizer': optimizer.state_dict()
+                    },
+                    is_best=True,
+                    path=target_path,
+                    target=config['model_id']
+                )
+                # print('evaluating...')
+                # snr = evaluate.evaluate(config=config)
+                # writer.add_scalar('snr', snr, epoch)
 
         # save params
         params = {
@@ -350,12 +367,3 @@ def main(cfg):
 
         utils.plot_loss_to_png(os.path.join(target_path,  config['model_id'] + '.json'))
         train_times.append(time.time() - end)
-
-        # Evaluate SNR every 10 epochs
-        if epoch%10 == 0:
-            snr = evaluate.evaluate(config=config)
-            writer.add_scalar('snr', snr, epoch)
-
-        if stop:
-            print("Apply Early Stopping")
-            break

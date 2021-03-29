@@ -114,7 +114,7 @@ class SkipEncoding(nn.Module):
             self.out_channels = self.W_layer
             self.in_channels  = self.W_layer if layer > 0 else 1
 
-            self.dec_conv.append(nn.ConvTranspose1d(
+            self.dec_conv.append(nn.Conv1d(
                 in_channels=self.in_channels,
                 out_channels=self.out_channels,
                 kernel_size=self.kernel_size_up,
@@ -175,6 +175,7 @@ class ScalarSoftmaxQuantization(nn.Module):
         self.tau  = 0
         self.tau2 = 0
         self.entropy_avg = utils.AverageMeter()
+        self.module_name = module_name
     
     def forward_q(self, x):
 

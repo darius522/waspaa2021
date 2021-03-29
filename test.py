@@ -5,13 +5,8 @@ import utils
 import os
 import tqdm
 
-rootPath='../../../media/sdb1/Data/ETRI_Music/'
-
-allPaths = []
-allPaths += [os.path.join(rootPath,song) for song in os.listdir(rootPath) if not os.path.isdir(os.path.join(rootPath, song))]
-
-for path in tqdm.tqdm(allPaths):
-    audio = utils.load_audio(path)
-    if torch.any(torch.isnan(audio)):
-        print(path)
+audio = utils.load_audio('../../../media/sdb1/Data/0809-00001-LFD_LPC_residual.wav')
+audio*=10
+print(audio)
+utils.soundfile_writer('test.wav',audio.permute(1,0),32000)
 

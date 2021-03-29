@@ -9,6 +9,7 @@ import torch.nn as nn
 
 import torchaudio
 import soundfile
+from audiolazy import *
 
 from scipy.interpolate import interp1d
 from enum import Enum
@@ -187,6 +188,39 @@ def save_checkpoint(
             os.path.join(path, target + '.pth')
         )
 
+def vec2mat(x, framesize, overlap, window=[]): 
+    print(x.shape)
+    assert len(x.shape)==1
+    hopsize=framesize-overlap
+    nFr=x.shape[0]//hopsize
+    if x.shape[0] >= nFr*hopsize:
+        x=np.concatenate((x, np.zeros(nFr*hopsize+framesize-x.shape[0])))
+        nFr=nFr+1
+    X=np.zeros((framesize, nFr))    
+    for i in range(nFr):
+        X[:,i]=x[i*hopsize:i*hopsize+framesize].copy()
+    if len(window) > 0:
+        X[:overlap,:]*=window[:overlap]
+        X[-overlap:,:]*=window[-overlap:]
+    return X
+
+def mat2vec(X, framesize, overlap, window=[]): 
+    hopsize=framesize-overlap
+    nFr=X.shape[1]
+    x=np.zeros((nFr-1)*hopsize+framesize)
+    if len(window) > 0:
+        X[:overlap,:]*=window[:overlap]
+        X[-overlap:,:]*=window[-overlap:]
+    for i in range(nFr):
+        x[i*hopsize:i*hopsize+framesize]+=X[:,i].copy()
+    return x
+
+def LPC_synthesis(LPCcoef, residual):    
+    analysis_filt = ZFilter(list(LPCcoef), [1])
+    synth_filt = 1 / analysis_filt
+    yh=synth_filt(residual)
+    yh=np.array(list(yh))
+    return yh
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""

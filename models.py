@@ -22,8 +22,9 @@ class Waveunet(nn.Module):
         quant_num_bins = 2**5,
         target_entropy = -1,
         entropy_fuzz = 0.01,
-        tau_change = 0.005,
-        quant_alpha = -20
+        tau_changes = [],
+        quant_alpha = -20,
+        alpha_decrease = 0.0
     ):
 
         super(Waveunet, self).__init__()
@@ -60,9 +61,10 @@ class Waveunet(nn.Module):
         # Entropy
         self.target_entropy = -1
         self.entropy_fuzz   = -1
-        self.tau_change     = tau_change
+        self.tau_changes     = tau_changes
         self.code_entropies = torch.zeros(1,2,dtype=torch.float)
         self.quant_losses   = torch.zeros(1,2,dtype=torch.float)
+        self.alpha_decrease = alpha_decrease
         
         # Encoding Path
         for layer in range(num_layers):
@@ -168,14 +170,14 @@ class Waveunet(nn.Module):
         entropy = self.get_overall_entropy_avg()
         # Get bottleneck quant
         if (entropy < (self.target_entropy - self.entropy_fuzz)):
-            self.quant.tau -= self.tau_change
-            self.quant.tau2 -= (self.tau_change * 2)
+            self.quant.tau -= self.tau_changes[0]
+            self.quant.tau2 -= self.tau_changes[1]
             if (self.quant.tau < 0): self.quant.tau = 0.0
             if (self.quant.tau2 < 0): self.quant.tau2 = 0.0
         elif entropy > (self.target_entropy + self.entropy_fuzz):
-            #self.quant.tau += self.tau_change / 2
+            self.quant.tau += self.tau_changes[2]
             # When within acceptable window, make quant loss (alpha) kick in
-            self.quant.tau2 += self.tau_change
+            self.quant.tau2 += self.tau_changes[3]
         
         self.reset_entropy_hists()
 
@@ -221,8 +223,9 @@ class HARPNet(nn.Module):
         target_entropy = -1,
         entropy_fuzz = 0.01,
         num_skips = 1,
-        tau_change = 0.0008,
-        quant_alpha = -40
+        tau_changes = [],
+        quant_alpha = -40,
+        alpha_decrease = 0.0
     ):
 
         super(HARPNet, self).__init__()
@@ -260,9 +263,10 @@ class HARPNet(nn.Module):
         # Entropy
         self.target_entropy = -1
         self.entropy_fuzz   = -1
-        self.tau_change     = tau_change
+        self.tau_changes     = tau_changes
         self.code_entropies = torch.zeros(1,2,dtype=torch.float)
         self.quant_losses   = torch.zeros(1,2,dtype=torch.float)
+        self.alpha_decrease = alpha_decrease
         
         # Encoding Path
         for layer in range(num_layers):
@@ -387,8 +391,8 @@ class HARPNet(nn.Module):
                 self.quant_losses = torch.cat((self.quant_losses,input_quant_loss))
             x = torch.cat((x, inputs), 1)
 
-        x = self.dec_conv[-1](x)
-        y = self.tanh(x)
+        y = self.dec_conv[-1](x)
+        #y = self.tanh(x)
 
         return y
 
@@ -400,26 +404,30 @@ class HARPNet(nn.Module):
         entropy = self.get_overall_entropy_avg()
         # Get bottleneck quant
         if (entropy < (self.target_entropy - self.entropy_fuzz)):
-            self.quant.tau -= self.tau_change
-            self.quant.tau2 -= (self.tau_change * 2)
+            self.quant.tau -= self.tau_changes[0]
+            self.quant.tau2 -= self.tau_changes[1]
             if (self.quant.tau < 0): self.quant.tau = 0.0
             if (self.quant.tau2 < 0): self.quant.tau2 = 0.0
         elif entropy > (self.target_entropy + self.entropy_fuzz):
-            #self.quant.tau += self.tau_change / 2
+            self.quant.tau += self.tau_changes[2]
             # When within acceptable window, make quant loss (alpha) kick in
-            self.quant.tau2 += self.tau_change
+            self.quant.tau2 += self.tau_changes[3]
+        
+        self.quant.alpha -= 0.3
 
         for skip in self.skip_encoders:
             # Get skip quant
             if (entropy < (self.target_entropy - self.entropy_fuzz)):
-                skip.quant.tau -= self.tau_change
-                skip.quant.tau2 -= (self.tau_change * 2)
+                skip.quant.tau -= self.tau_changes[0]
+                skip.quant.tau2 -= self.tau_changes[1]
                 if (skip.quant.tau < 0): skip.quant.tau = 0.0
                 if (skip.quant.tau2 < 0): skip.quant.tau2 = 0.0
             elif entropy > (self.target_entropy + self.entropy_fuzz):
-                #self.quant.tau += self.tau_change / 2
+                skip.quant.tau += self.tau_changes[2]
                 # When within acceptable window, make quant loss (alpha) kick in
-                skip.quant.tau2 += self.tau_change
+                skip.quant.tau2 += self.tau_changes[3]
+            
+            skip.quant.alpha -= 0.3
         
         self.reset_entropy_hists()
 
