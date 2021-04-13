@@ -14,14 +14,15 @@ dir_out = '../harpnet_evaluation/configs/resources/audio/mp3l_songs'
 
 paths = glob.glob('../harpnet_evaluation/configs/resources/audio/gt_songs/*.wav')
 paths = sorted(paths)
-print(paths)
 
 lengths = []
 for path in paths:
 
-    print(path)
     sound = AudioSegment.from_file(path)
-    sound.export(os.path.join('../harpnet_evaluation/configs/resources/audio/mp3s_songs/',os.path.basename(path).split('.')[0]+'.mp3'), format="mp3", bitrate="64k")
+
+    stereo_sound = AudioSegment.from_mono_audiosegments(sound, sound)
+    
+    stereo_sound.export(path, format='WAV')
 
 # test_csv = './data/test_set44.csv'
 # with open(test_csv, newline='') as f:
@@ -30,10 +31,9 @@ for path in paths:
 
 
 # count = 0
-# paths = glob.glob('../harpnet_evaluation/configs/resources/audio/mp3s_songs/*.mp3')
+# paths = glob.glob('../harpnet_evaluation/configs/resources/audio/gt_songs/*.wav')
 # paths = sorted(paths)
 # for i, path in enumerate(paths):
-#     print(path)
 #     count += 1
 #     audio = utils.load_audio(path, start=0, dur=None)
 #     audio = torch.clone(torch.mean(audio, axis=0, keepdim=True))
