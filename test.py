@@ -4,9 +4,43 @@ from matplotlib import pyplot as plt
 import utils
 import os
 import tqdm
+import csv
+import numpy as np
+import glob
 
-audio = utils.load_audio('../../../media/sdb1/Data/0809-00001-LFD_LPC_residual.wav')
-audio*=10
-print(audio)
-utils.soundfile_writer('test.wav',audio.permute(1,0),32000)
+from pydub import AudioSegment
 
+dir_out = '../harpnet_evaluation/configs/resources/audio/mp3l_songs'
+
+paths = glob.glob('../harpnet_evaluation/configs/resources/audio/gt_songs/*.wav')
+paths = sorted(paths)
+print(paths)
+
+lengths = []
+for path in paths:
+
+    print(path)
+    sound = AudioSegment.from_file(path)
+    sound.export(os.path.join('../harpnet_evaluation/configs/resources/audio/mp3s_songs/',os.path.basename(path).split('.')[0]+'.mp3'), format="mp3", bitrate="64k")
+
+# test_csv = './data/test_set44.csv'
+# with open(test_csv, newline='') as f:
+#     reader = csv.reader(f)
+#     testPaths = list(reader)
+
+
+# count = 0
+# paths = glob.glob('../harpnet_evaluation/configs/resources/audio/mp3s_songs/*.mp3')
+# paths = sorted(paths)
+# for i, path in enumerate(paths):
+#     print(path)
+#     count += 1
+#     audio = utils.load_audio(path, start=0, dur=None)
+#     audio = torch.clone(torch.mean(audio, axis=0, keepdim=True))
+#     print(audio.size(1),lengths[i])
+#     new_audio = audio[:,:lengths[i]]
+#     print(new_audio.size(1)==lengths[i])
+#     new_audio = new_audio.permute(1,0).cpu().detach().numpy() 
+#     num = os.path.splitext(path)[0].split('_')[-1].split('.')[0]
+
+#     utils.soundfile_writer(os.path.join(dir_out, 'yn_'+str(num)+'.mp3'), new_audio, 44100)

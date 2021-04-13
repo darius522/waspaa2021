@@ -62,11 +62,11 @@ def train(config, model, device, train_sampler, optimizer, writer, epoch):
     entropy_avg       = 0
     model.train()
 
-    it_bar = tqdm.tqdm(range(config['num_its']), disable=config['quiet'], desc='Iteration',position=0)
-    batch_bar = tqdm.tqdm(train_sampler, disable=config['quiet'], desc='Batch',position=1)
+    # it_bar = tqdm.tqdm(range(config['num_its']), disable=config['quiet'], desc='Iteration',position=0)
+    # batch_bar = tqdm.tqdm(train_sampler, disable=config['quiet'], desc='Batch',position=1)
 
-    for it in it_bar:
-        for i, x in enumerate(batch_bar):
+    for it in range(config['num_its']):
+        for i, x in enumerate(train_sampler):
 
             x = x.to(device)
             optimizer.zero_grad()
@@ -199,7 +199,7 @@ def main(cfg):
     totLen    = len(allPaths)
     random.seed(0)
 
-    test_csv = './data/test_set32_lpc.csv'#'./data/test_set44.csv' if config['sample_rate'] == 44100 else './data/test_set32.csv'
+    test_csv = './data/test_set44_lpc.csv' if config['sample_rate'] == 44100 else './data/test_set32_lpc.csv'
     with open(test_csv, newline='') as f:
         reader  = csv.reader(f)
         tePaths = list(reader)
@@ -259,12 +259,13 @@ def main(cfg):
         weight_decay=config['weight_decay']
     )
 
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-    optimizer,
-    factor=config['lr_decay_gamma'],
-    patience=config['lr_decay_patience'],
-    cooldown=10,
-    )
+    # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+    # optimizer,
+    # factor=config['lr_decay_gamma'],
+    # patience=config['lr_decay_patience'],
+    # verbose=True,
+    # threshold=0.01
+    # )
 
     es = utils.EarlyStopping(patience=config['patience'])
 
@@ -304,8 +305,9 @@ def main(cfg):
                                                                         epoch)
         train_losses.append(train_loss)
         valid_losses.append(valid_loss)
-        scheduler.step(mse_val_loss)
+        #scheduler.step(mse_val_loss)
 
+        #writer.add_scalar("adapted_lr", scheduler._last_lr, epoch)
         writer.add_scalar("mse_train_loss", mse_train_loss, epoch)
         writer.add_scalar("mse_valid_loss", mse_val_loss, epoch)
         writer.add_scalar("entropy_train_loss", ent_train_loss, epoch)
@@ -335,7 +337,7 @@ def main(cfg):
                 best_epoch = epoch
                 utils.save_checkpoint({
                         'epoch': epoch + 1,
-                        'scheduler': scheduler.state_dict(),
+                        #'scheduler': scheduler.state_dict(),
                         'state_dict': model.state_dict(),
                         'best_loss': es.best,
                         'optimizer': optimizer.state_dict()

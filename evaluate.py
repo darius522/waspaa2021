@@ -25,10 +25,12 @@ import math
 from matplotlib import pyplot as plt
 import random
 import pandas as pd
+from pathlib import Path
 
 from utils import (normalize_audio)
 
 import torchaudio
+import museval
 
 ex = Experiment('HARP Evaluation', ingredients=[config_ingredient])
 
@@ -38,8 +40,7 @@ def set_seed():
 
 def compute_snr(x, y):
     eps = 1e-20
-    ml  = np.minimum(len(x), len(y))
-    return 10 * np.log10((np.sum(x[:ml]**2)  / np.sum((x[:ml]-y[:ml])**2) + eps) + eps)   
+    return 10 * np.log10((np.sum(x**2)  / np.sum((x-y)**2) + eps) + eps)
 
 @config_ingredient.capture
 def load_a_model(config):
@@ -79,7 +80,7 @@ def load_a_model(config):
 
     num_param = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-    return model, num_param
+    return model, num_param, model_path
 
 @config_ingredient.capture
 def prepare_audio(config, audio):
@@ -141,8 +142,11 @@ def compute_lpc(residual, coef_path):
     A = np.load(coef_path,allow_pickle=True)
     R = utils.vec2mat(residual,1024,512,hann)
     Yh = np.zeros_like(R)
+    unstableCnt=0
     for i in range(A.shape[1]):
-        Yh[:,i] = utils.LPC_synthesis(A[:,i], R[:,i])
+        Yh[:,i], unstable = utils.LPC_synthesis(A[:,i], R[:,i])
+        if unstable:
+            unstableCnt+=1
     yh = utils.mat2vec(Yh, 1024, 512,hann)
 
     return yh
@@ -171,40 +175,58 @@ def evaluate(config):
     use_cuda = torch.cuda.is_available()
     print("Using GPU:", use_cuda)
 
-    test_csv = './data/test_set44.csv' if config['sample_rate'] == 44100 else './data/test_set32_lpc.csv'
+    test_csv = './data/test_set44_lpc.csv' if config['sample_rate'] == 44100 else './data/test_set32_lpc.csv'
     with open(test_csv, newline='') as f:
         reader = csv.reader(f)
         testPaths = list(reader)
 
+    output_path = os.path.join(os.path.join(os.path.join(config['output_dir'], config['model']), config['model_id']),'songs')
+    if not os.path.isdir(output_path): os.mkdir(output_path)
+
     testPaths = [path for sublist in testPaths for path in sublist]
     
-    model, num_param = load_a_model()
+    model, num_param, model_path = load_a_model()
 
-    errors = []
+    #toWrite = ['1710-00001-PFO','1136-00001-JNO','1265-00003-PFO']
+
+    factor =config['optimal_factor']
+    snrs = []
+    sdrs = []
     count = 0
-    toWrite = ['1710-00001-PFO','1136-00001-JNO','1265-00003-PFO']
+    print('Computing for Factor:',factor)
     for test_path in tqdm.tqdm(testPaths):
+
         count += 1
+
         audio = utils.load_audio(test_path, start=0, dur=None, sr=config['sample_rate'])
+
         if config['nb_channels'] == 1:
-            audio_mono = torch.clone(torch.mean(audio, axis=0, keepdim=True))
+            audio = torch.clone(torch.mean(audio, axis=0, keepdim=True))
+
+        audio  *= factor
     
-        x, y = inference(model=model,audio=audio_mono)
-        #x /= 10.0
-        y /= 10.0
-        print(x.shape)
+        x, y = inference(model=model,audio=audio)
+
+        x /= factor
+        y /= factor
+
         x_lpc = compute_lpc(np.squeeze(x.cpu().permute(1,0).detach().numpy()),test_path.replace('_residual.wav','_Coef.npy'))
         y_lpc = compute_lpc(np.squeeze(y.cpu().permute(1,0).detach().numpy()),test_path.replace('_residual.wav','_Coef.npy'))
 
-        errors.append(compute_snr(x_lpc, y_lpc))
+        ml  = np.minimum(len(x_lpc), len(y_lpc))
+        snrs.append(compute_snr(x_lpc[:ml], y_lpc[:ml]))
+        #sdrs.append(np.mean(museval.evaluate(x_lpc[:ml][np.newaxis,...], y_lpc[:ml][np.newaxis,...])[0]))
 
-        if any(filename in test_path for filename in toWrite):
-            utils.soundfile_writer(os.path.join(os.path.join(config['output_dir'], config['model']), config['model_id']) +'/x'+str(count)+'.wav', x_lpc, config['sample_rate'])
-            utils.soundfile_writer(os.path.join(os.path.join(config['output_dir'], config['model']), config['model_id']) +'/y'+str(count)+'.wav', y_lpc, config['sample_rate'])
+        #utils.soundfile_writer(os.path.join(os.path.join(config['output_dir'], config['model']), config['model_id']) +'/x'+str(count)+'_ref.wav', x_lpc, config['sample_rate'])
+        utils.soundfile_writer(os.path.join(output_path, 'y_'+str(count)+'.wav'), y_lpc, config['sample_rate'])
 
-    mse_mean = np.mean(np.asarray(errors))
+    mse_mean = np.mean(np.asarray(snrs))
+    #sdr_mean = np.mean(np.asarray(sdrs))
     print('SNR computed:',mse_mean)
+    #print('SDR computed:',sdr_mean)
     # Write results to csv
+    np.save(os.path.join(model_path,'mse_results_'+str(factor)), np.asarray(snrs))
+    #np.save(os.path.join(model_path,'sdr_results_'+str(factor)), np.asarray(sdrs))
     results = config['results_csv']
     if not os.path.isfile(results): 
         with open(results, "w") as c: 
@@ -215,9 +237,10 @@ def evaluate(config):
     frame.set_index('model')
     d = {'model':config['model'], 'target_bitrate': config['target_bitrate'], 'num_param':str(num_param//1000)+'k', 'mse':mse_mean}
     frame = frame.append(d, ignore_index=True)
+    frame = frame.loc[:, ~frame.columns.str.contains('^Unnamed')]
     frame.to_csv(results)
     
-    return np.mean(np.asarray(errors))
+    return np.mean(np.asarray(snrs))
 
 @ex.automain
 def main(cfg):

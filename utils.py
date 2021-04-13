@@ -189,7 +189,6 @@ def save_checkpoint(
         )
 
 def vec2mat(x, framesize, overlap, window=[]): 
-    print(x.shape)
     assert len(x.shape)==1
     hopsize=framesize-overlap
     nFr=x.shape[0]//hopsize
@@ -215,12 +214,24 @@ def mat2vec(X, framesize, overlap, window=[]):
         x[i*hopsize:i*hopsize+framesize]+=X[:,i].copy()
     return x
 
-def LPC_synthesis(LPCcoef, residual):    
+def LPC_synthesis(LPCcoef, residual):
     analysis_filt = ZFilter(list(LPCcoef), [1])
+#     print(analysis_filt)
     synth_filt = 1 / analysis_filt
+#     print(synth_filt)
+    unstable=True
+    for i in range(10000): # check thte synth filter stability for 10000 times
+        if not lsf_stable(synth_filt):
+            LPCcoef*=.99
+            analysis_filt = ZFilter(list(LPCcoef), [1])
+            synth_filt = 1 / analysis_filt
+        else:
+            unstable=False
+            break
+        
     yh=synth_filt(residual)
     yh=np.array(list(yh))
-    return yh
+    return yh, unstable
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""

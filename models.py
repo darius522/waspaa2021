@@ -48,6 +48,7 @@ class Waveunet(nn.Module):
         self.tanh  = nn.Tanh()
         self.ds    = modules.Downsample()
         self.us    = nn.Upsample(scale_factor=2, mode='linear',align_corners=True)
+        self.dropout = nn.Dropout()
 
         # Quant
         self.quant = None
@@ -155,10 +156,12 @@ class Waveunet(nn.Module):
 
             x = self.dec_conv[layer](x)
             x = self.bn_dec[layer](x)
+            if layer > 0 and layer < self.num_layers-2:
+                x = self.dropout(x)
             x = self.leaky(x)
 
-        x = self.dec_conv[-1](x)
-        y = self.tanh(x)
+        y = self.dec_conv[-1](x)
+        #y = self.tanh(x)
 
         return y
 
@@ -178,6 +181,8 @@ class Waveunet(nn.Module):
             self.quant.tau += self.tau_changes[2]
             # When within acceptable window, make quant loss (alpha) kick in
             self.quant.tau2 += self.tau_changes[3]
+        
+        self.quant.alpha -= 0.6
         
         self.reset_entropy_hists()
 
@@ -250,6 +255,7 @@ class HARPNet(nn.Module):
         self.tanh  = nn.Tanh()
         self.ds    = modules.Downsample()
         self.us    = nn.Upsample(scale_factor=2, mode='linear',align_corners=True)
+        self.dropout = nn.Dropout()
 
         # Quant
         self.quant = None
@@ -373,6 +379,8 @@ class HARPNet(nn.Module):
 
             x = self.dec_conv[layer](x)
             x = self.bn_dec[layer](x)
+            # if layer > 0 and layer < self.num_layers-2:
+            #     x = self.dropout(x)
             x = self.leaky(x)
             # If model uses skip connection (either encoded or identity)
             if layer <= self.num_skips-1:
@@ -412,8 +420,6 @@ class HARPNet(nn.Module):
             self.quant.tau += self.tau_changes[2]
             # When within acceptable window, make quant loss (alpha) kick in
             self.quant.tau2 += self.tau_changes[3]
-        
-        self.quant.alpha -= 0.3
 
         for skip in self.skip_encoders:
             # Get skip quant
@@ -427,7 +433,9 @@ class HARPNet(nn.Module):
                 # When within acceptable window, make quant loss (alpha) kick in
                 skip.quant.tau2 += self.tau_changes[3]
             
-            skip.quant.alpha -= 0.3
+            #skip.quant.alpha -= 0.3
+
+        self.quant.alpha -= 0.6
         
         self.reset_entropy_hists()
 
