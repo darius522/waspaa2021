@@ -12,7 +12,7 @@ from pydub import AudioSegment
 
 dir_out = '../harpnet_evaluation/configs/resources/audio/mp3l_songs'
 
-paths = glob.glob('../harpnet_evaluation/configs/resources/audio/gt_songs/*.wav')
+paths = glob.glob('../harpnet_evaluation/configs/resources/audio/hs_songs/*.wav')
 paths = sorted(paths)
 
 lengths = []

@@ -203,6 +203,8 @@ def evaluate(config):
         if config['nb_channels'] == 1:
             audio = torch.clone(torch.mean(audio, axis=0, keepdim=True))
 
+        # factor = (1.0 / torch.std(audio)) * 15
+        # print('factor = ',factor)
         audio  *= factor
     
         x, y = inference(model=model,audio=audio)

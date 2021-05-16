@@ -222,7 +222,7 @@ def LPC_synthesis(LPCcoef, residual):
     unstable=True
     for i in range(10000): # check thte synth filter stability for 10000 times
         if not lsf_stable(synth_filt):
-            LPCcoef*=.99
+            LPCcoef*=.95
             analysis_filt = ZFilter(list(LPCcoef), [1])
             synth_filt = 1 / analysis_filt
         else:
